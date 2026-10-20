@@ -15,7 +15,7 @@
         <div class="logo-mark">LD</div>
         <div class="brand-text">
           <span class="brand-title">LazyDev</span>
-          <span class="brand-sub">Milestone 3 · Permission-Gated File Editing & Diff Engine</span>
+          <span class="brand-sub">Milestone 4 · Local AI Assistant & Permission-Gated Edit Automation</span>
         </div>
       </div>
 
@@ -106,8 +106,65 @@
           </div>
         </div>
 
-        <!-- Milestone 3: Permission-Gated File Editing & Proposals -->
-        <div class="proposal-section">
+        <!-- Milestone 4: AI Task Assistant (Local Open-Weight Model) -->
+        <div class="ai-assistant-section">
+          <div class="section-title">
+            <span>AI Task Assistant (Local Open-Weight Model)</span>
+            <span class="badge badge-accent">Permission-Gated</span>
+          </div>
+
+          <div id="ai-demo-banner" class="ai-demo-banner" style="display: none;">
+            <span class="status-dot" style="background-color: #f59e0b; box-shadow: 0 0 6px #f59e0b;"></span>
+            <span>Demo Mode — no AI model connected.</span>
+          </div>
+
+          <div class="ai-assistant-form">
+            <div class="ai-controls-row">
+              <div class="ai-control-group" style="flex: 1;">
+                <label for="ai-model-select" class="input-label">Local Ollama Model:</label>
+                <select id="ai-model-select" class="text-input" style="cursor: pointer;">
+                  <option value="">Loading local models...</option>
+                </select>
+              </div>
+
+              <div class="ai-control-group" style="flex: 1;">
+                <label for="ai-target-file" class="input-label">Target File (Relative Path):</label>
+                <input
+                  type="text"
+                  id="ai-target-file"
+                  class="text-input"
+                  placeholder="e.g. src/index.ts (or select below)"
+                >
+              </div>
+            </div>
+
+            <div class="textarea-group" style="margin-top: 8px;">
+              <label for="ai-prompt-input" class="input-label">Task Instructions:</label>
+              <textarea
+                id="ai-prompt-input"
+                class="text-input ai-textarea"
+                placeholder="Describe your coding task (e.g. 'Add input sanitization for user queries', 'Fix typo in error message', 'Add docstrings')..."
+                rows="4"
+                spellcheck="false"
+              ></textarea>
+            </div>
+
+            <div style="display: flex; gap: 12px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
+              <button id="ai-generate-btn" class="btn btn-primary">Generate Proposal with AI</button>
+              <button id="ai-cancel-btn" class="btn btn-danger" style="display: none;">Cancel Generation</button>
+              <span class="input-hint">AI creates a staged proposal only. Changes are never written to disk without explicit review and approval.</span>
+            </div>
+
+            <!-- Real-time AI Status Indicator -->
+            <div id="ai-status-container" class="ai-status-container" style="display: none;">
+              <div class="spinner"></div>
+              <span id="ai-status-message">Connecting to local model...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Milestone 3: Manual File Change Proposals -->
+        <div class="proposal-section" style="margin-top: 24px;">
           <div class="section-title">File Change Proposals (Permission-Gated):</div>
           <div class="proposal-form">
             <div class="input-group" style="margin-bottom: 8px;">
@@ -123,12 +180,12 @@
                 id="proposal-content-input"
                 class="text-input proposal-textarea"
                 placeholder="Enter proposed new file content..."
-                rows="5"
+                rows="4"
                 spellcheck="false"
               ></textarea>
             </div>
             <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-              <button id="create-proposal-btn" class="btn btn-primary">Generate Diff Preview</button>
+              <button id="create-proposal-btn" class="btn btn-secondary">Generate Manual Diff Preview</button>
               <span class="input-hint">Preview generates diff only. Zero changes are applied before explicit user approval.</span>
             </div>
           </div>
@@ -191,19 +248,19 @@
               </div>
             </div>
 
-            <div class="roadmap-item active">
-              <div class="roadmap-marker">3</div>
+            <div class="roadmap-item completed">
+              <div class="roadmap-marker">✓</div>
               <div class="roadmap-content">
-                <strong>Milestone 3: Permission-Gated File Editing & Diff Engine (Current)</strong>
+                <strong>Milestone 3: Permission-Gated File Editing & Diff Engine</strong>
                 <p>Unified visual diffs, staged file proposals, explicit 2-phase user approval, and atomic file recovery.</p>
               </div>
             </div>
 
-            <div class="roadmap-item future">
+            <div class="roadmap-item active">
               <div class="roadmap-marker">4</div>
               <div class="roadmap-content">
-                <strong>Milestone 4: Open-Weight Model Orchestration</strong>
-                <p>Streaming inference, task decomposition, test generation, and documentation.</p>
+                <strong>Milestone 4: Local AI Assistant & Edit Automation (Current)</strong>
+                <p>Bounded context assembly, local Ollama models, structured proposal generation, and isolated cancellation.</p>
               </div>
             </div>
           </div>

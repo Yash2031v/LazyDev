@@ -14,40 +14,34 @@
 
 ---
 
-## 2. Current Status — Milestone 3: Permission-Gated File Editing and Diff Engine
+## 2. Current Status — Milestone 4: Local AI Assistant & Permission-Gated Edit Automation
 
-This repository implements **Milestone 3**. LazyDev introduces a controlled file-editing system that lets developers review proposed changes and explicitly approve them before any project file is touched on disk.
+This repository implements **Milestone 4**. LazyDev introduces a complete end-to-end local AI pair-programming assistant that leverages open-weight models executed locally through Ollama, connecting local model inference directly into the permission-gated proposal and diff engine.
 
-### Implemented Features (Milestone 1 + Milestone 2 + Milestone 3)
-- **Strict Loopback Server**: An HTTP server built entirely on Node.js standard libraries, binding exclusively to `127.0.0.1` (never `0.0.0.0`).
-- **Validated Environment Configuration**: Support for `PORT` (default: `4173`), `HOST` (default: `127.0.0.1`), `OLLAMA_HOST` (default: `http://127.0.0.1:11434`), and `OLLAMA_TIMEOUT_MS` (default: `2000`).
-- **Defensive Security Guardrails**: Host header validation, Origin & Sec-Fetch-Site cross-origin blockers, Content Security Policy (`default-src 'self'`), clickjacking prevention, and request payload size limits (64KB).
-- **Safe Codebase Indexer**: Canonical project root validation (`fs.realpath`), symlink escape protection, `.gitignore` parsing, secret file exclusion (`.env`, private keys), and binary detection.
-- **Unified Diff Engine (Zero Dependencies)**:
-  - Custom Longest Common Subsequence (LCS) matrix diff generator with line additions, deletions, context preservation, and standard unified diff formatting.
-  - Normalizes CRLF and LF line endings to prevent false Windows diffs.
-- **Permission-Gated State Machine**:
-  - Distinct lifecycle states: `draft → awaiting_approval → approved → applied`, with terminal states `rejected`, `expired`, and `conflict`.
-  - Creating a proposal writes **zero bytes to disk**.
-  - Approval is bound to an exact proposal ID, project root, target path, and SHA-256 hash.
-  - Approval requires a separate explicit user action via a 32-byte cryptographic single-use token.
-  - Stale file detection: if the file on disk changes after the preview was generated, the proposal transitions to `conflict` and cannot be applied.
-  - Configurable TTL: expired proposals are blocked from approval or execution.
-- **Atomic Application & Rollback**:
-  - Re-validates root boundary, secret rules, binary extensions, and file hash immediately before applying.
-  - Generates a local backup (`.lazydev-backup-${id}.bak`) before file content replacement.
-  - Writes new content to an isolated temporary file (`.lazydev-tmp-${id}.tmp`) in the target directory, flushes to physical storage (`handle.sync()`), closes handles, and executes an atomic replacement via `fs.rename`.
-  - Automatically rolls back from backup if any step fails.
+### Implemented Features (Milestones 1 – 4)
+- **Local Ollama Integration**:
+  - Non-streaming typed `OllamaClient.chat()` endpoint connecting to local Ollama (`http://127.0.0.1:11434/api/chat`).
+  - Strict loopback-only host validation rejecting remote DNS, public IPs, private LAN IPs, and URLs with credentials or query parameters.
+  - HTTP redirect rejection (`redirect: 'error'`) preventing prompt exfiltration.
+  - Bounded incremental stream reading with early reader cancellation to protect against memory exhaustion.
+- **AI Task Assistant & Prompt Orchestration**:
+  - `PromptBuilder`: Assembles bounded system instructions and target file context with hard context limits.
+  - `ResponseParser`: Robustly extracts structured JSON proposals from candidate model outputs, handling markdown fences, conversational preambles, and trailing commas.
+  - `AiService`: Coordinates model selection, context building, model querying, structured parsing, and proposal staging.
+  - `RequestCancellationManager`: Isolated per-task `AbortController` tracking ensuring cancellation of one task never affects concurrent requests.
+- **End-to-End Safe Workflow**:
+  - `User Task Prompt` → `Local Ollama Inference` → `Structured Parser` → `Staged Proposal in EditorService` → `Visual Unified Diff Inspection` → `Explicit Approval Token Verification` → `Atomic Disk Write with Automatic Backup`.
+  - Zero model outputs are written directly to disk without passing through the permission gate.
 - **Desktop Developer Interface**:
-  - Live local-AI connectivity status pill.
-  - Proposal creation form with relative path validation.
-  - Interactive proposal review modal with side-by-side addition/deletion metrics and color-coded unified diff viewer.
-  - Separate Approve, Reject, and Apply action buttons.
-
-### Safety Limitations & Windows Considerations
-- **Windows File Handle Locking**: On Windows, open file handles prevent file renaming and deletion (`EBUSY / EPERM`). LazyDev explicitly flushes and closes all file handles prior to executing atomic rename operations.
-- **Filesystem Volatility & TOCTOU**: While LazyDev checks file hashes immediately before rename, non-POSIX filesystems lack atomic compare-and-swap primitives for disk files. LazyDev mitigates this by maintaining a recoverable backup file in the local directory.
-- **AI Inference Not Included in Milestone 3**: Autonomous agents and model-generated proposals are part of Milestone 4. Milestone 3 implements the foundational permission-gated verification and diff engine.
+  - Live local Ollama connectivity status pill and dynamic model selector.
+  - AI Task Assistant with target file pre-population on file click.
+  - Live progress feedback with real-time cancel button.
+  - Interactive unified diff modal with side-by-side addition/deletion metrics and color-coded viewer.
+  - 2-phase Approve and Apply buttons with single-use cryptographic tokens.
+- **Defensive Security & Zero Cloud Dependency**:
+  - 100% loopback-only binding (`127.0.0.1`). Zero external cloud AI APIs, zero telemetry, zero analytics.
+  - Path traversal blockers (`resolveSafeRelativePath`), secret exclusions (`.env`, `.npmrc`, `.ssh`), and binary filters.
+  - Atomic rename writes with file-handle sync and local rollback backups.
 
 ---
 
@@ -90,10 +84,37 @@ Output:
 ```
 [LazyDev] Local server listening at http://127.0.0.1:4173
 [LazyDev] Security check: Bound exclusively to loopback (127.0.0.1)
-[LazyDev] Ollama target: http://127.0.0.1:11434
+[LazyDev] Mode: OLLAMA (http://127.0.0.1:11434)
 ```
 
 Open your browser to: **`http://127.0.0.1:4173`**
+
+### Running in Ollama-Free Demo Mode
+
+If Ollama is not installed or running, start LazyDev in deterministic local Demo Mode:
+
+```powershell
+# Windows PowerShell
+$env:LAZYDEV_AI_MODE="demo"
+npm run dev
+
+# Or inline on bash / POSIX:
+LAZYDEV_AI_MODE=demo npm run dev
+```
+
+Output:
+```
+[LazyDev] Local server listening at http://127.0.0.1:4173
+[LazyDev] Security check: Bound exclusively to loopback (127.0.0.1)
+[LazyDev] Mode: DEMO MODE (LAZYDEV_AI_MODE=demo) — Ollama will not be contacted.
+```
+
+In Demo Mode:
+- Zero connections to Ollama or any remote service.
+- The UI displays **“Demo Mode — no AI model connected.”**
+- Generates clearly labeled deterministic sample proposals (`[DEMO MODE SAMPLE]`).
+- Full unified diff inspection, rejection, explicit approval token, atomic file apply, and backup protections remain 100% active.
+
 
 ### Running the Automated Tests
 
@@ -199,6 +220,52 @@ Applies an approved proposal to disk using atomic rename and backup generation.
 }
 ```
 
+### `GET /api/ai/models`
+Returns list of local models installed in Ollama.
+```json
+{
+  "models": ["qwen2.5-coder:7b", "llama3.2:3b"]
+}
+```
+
+### `POST /api/ai/task`
+Assembles context, queries local Ollama model, and stages a permission-gated proposal.
+```json
+// Request
+{
+  "model": "qwen2.5-coder:7b",
+  "targetFilePath": "src/utils.ts",
+  "taskPrompt": "Add error boundary to calculation",
+  "taskId": "optional-custom-task-id"
+}
+
+// Response (201 Created)
+{
+  "message": "AI edit proposal staged successfully.",
+  "result": {
+    "taskId": "task-1729420000-abc1",
+    "explanation": "Added try/catch error boundary",
+    "model": "qwen2.5-coder:7b",
+    "proposal": {
+      "id": "c1f7b0a8-...",
+      "status": "awaiting_approval",
+      "relativePath": "src/utils.ts",
+      "diff": { "additions": 5, "deletions": 1, "unified": "..." }
+    }
+  }
+}
+```
+
+### `POST /api/ai/cancel`
+Cancels an active AI generation task by task ID using isolated AbortControllers.
+```json
+// Request
+{ "taskId": "task-1729420000-abc1" }
+
+// Response (200 OK)
+{ "message": "Task cancelled successfully.", "cancelled": true }
+```
+
 ---
 
 ## 6. Architecture Roadmap
@@ -209,10 +276,10 @@ Applies an approved proposal to disk using atomic rename and backup generation.
 | **1** | Professional Foundation & Local Scaffolding | Complete |
 | **2** | Safe Codebase Indexing & Read-Only Tools | Complete |
 | **2.1** | Security Audit & Multi-Layer Hardening | Complete |
-| **3** | Permission-Gated File Editing & Diff Engine | **Complete (Current)** |
-| **4** | Open-Weight Model Orchestration & Prompts | Planned |
-| **5** | Desktop UI & User Approval Workflows | Planned |
-| **6** | End-to-End Testing & Packaging | Planned |
+| **3** | Permission-Gated File Editing & Diff Engine | Complete |
+| **3.1** | Permission & Atomic Safety Audit | Complete |
+| **4** | Local AI Assistant & Permission-Gated Edit Automation | **Complete (Current)** |
+| **5** | Advanced Task Decomposition & Multi-File Planning | Next |
 
 ---
 

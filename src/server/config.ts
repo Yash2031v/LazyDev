@@ -9,6 +9,7 @@ export interface AppConfig {
   readonly ollamaHost: string;
   readonly ollamaTimeoutMs: number;
   readonly allowedHosts: readonly string[];
+  readonly aiMode: 'ollama' | 'demo';
 }
 
 export class ConfigError extends Error {
@@ -42,15 +43,53 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
-  // Validate OLLAMA_HOST
+  // Validate OLLAMA_HOST - Strictly local loopback only
   const rawOllamaHost = (env['OLLAMA_HOST'] || DEFAULT_OLLAMA_HOST).trim();
+  let ollamaUrl: URL;
   try {
-    const url = new URL(rawOllamaHost);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    ollamaUrl = new URL(rawOllamaHost);
+    if (ollamaUrl.protocol !== 'http:' && ollamaUrl.protocol !== 'https:') {
       throw new Error('Protocol must be http or https');
     }
-  } catch (err) {
-    throw new ConfigError(`Invalid OLLAMA_HOST: "${rawOllamaHost}". Must be a valid HTTP/HTTPS URL.`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ConfigError(`Invalid OLLAMA_HOST: "${rawOllamaHost}". Must be a valid HTTP/HTTPS URL (${msg}).`);
+  }
+
+  // Reject credentials (username/password), query parameters, and hash fragments
+  if (ollamaUrl.username || ollamaUrl.password) {
+    throw new ConfigError(
+      `Invalid OLLAMA_HOST: "${rawOllamaHost}". Credentials (username/password) are forbidden in OLLAMA_HOST.`
+    );
+  }
+
+  if (ollamaUrl.search) {
+    throw new ConfigError(
+      `Invalid OLLAMA_HOST: "${rawOllamaHost}". Query parameters are forbidden in OLLAMA_HOST.`
+    );
+  }
+
+  if (ollamaUrl.hash) {
+    throw new ConfigError(
+      `Invalid OLLAMA_HOST: "${rawOllamaHost}". Hash fragments are forbidden in OLLAMA_HOST.`
+    );
+  }
+
+  // Exact hostname matching after URL parsing
+  const rawHostname = ollamaUrl.hostname.toLowerCase();
+  const unbracketedHostname = rawHostname.startsWith('[') && rawHostname.endsWith(']')
+    ? rawHostname.slice(1, -1)
+    : rawHostname;
+
+  const isLoopback =
+    unbracketedHostname === '127.0.0.1' ||
+    unbracketedHostname === 'localhost' ||
+    unbracketedHostname === '::1';
+
+  if (!isLoopback) {
+    throw new ConfigError(
+      `Invalid OLLAMA_HOST: "${rawOllamaHost}". For security, LazyDev only permits connecting to local loopback endpoints (127.0.0.1, localhost, or [::1]). Remote DNS, LAN, or external hosts are forbidden.`
+    );
   }
 
   // Validate OLLAMA_TIMEOUT_MS
@@ -65,6 +104,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ollamaTimeoutMs = parsed;
   }
 
+  // Validate LAZYDEV_AI_MODE - Opt-in local demo mode or standard Ollama
+  const rawAiMode = (env['LAZYDEV_AI_MODE'] || 'ollama').trim().toLowerCase();
+  if (rawAiMode !== 'ollama' && rawAiMode !== 'demo') {
+    throw new ConfigError(
+      `Invalid LAZYDEV_AI_MODE: "${env['LAZYDEV_AI_MODE']}". Must be "ollama" or "demo".`
+    );
+  }
+  const aiMode: 'ollama' | 'demo' = rawAiMode;
+
   // Allowed Host header values
   const allowedHosts = Object.freeze(
     port === 0
@@ -77,6 +125,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host,
     ollamaHost: rawOllamaHost,
     ollamaTimeoutMs,
-    allowedHosts
+    allowedHosts,
+    aiMode
   });
 }

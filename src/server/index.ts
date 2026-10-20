@@ -10,12 +10,14 @@ import { createRequestHandler } from './app.js';
 
 import { ProjectService } from './project/project-service.js';
 import { EditorService } from './editor/editor-service.js';
+import { AiService } from './ai/ai-service.js';
 
 export interface ServerInstance {
   readonly server: http.Server;
   readonly config: AppConfig;
   readonly projectService: ProjectService;
   readonly editorService: EditorService;
+  readonly aiService: AiService;
   readonly close: () => Promise<void>;
 }
 
@@ -23,7 +25,8 @@ export function startServer(
   customConfig?: AppConfig,
   clientDirOverride?: string,
   customProjectService?: ProjectService,
-  customEditorService?: EditorService
+  customEditorService?: EditorService,
+  customAiService?: AiService
 ): Promise<ServerInstance> {
   const config = customConfig ?? loadConfig();
   const ollamaClient = new OllamaClient({
@@ -32,13 +35,15 @@ export function startServer(
   });
   const projectService = customProjectService ?? new ProjectService();
   const editorService = customEditorService ?? new EditorService();
+  const aiService = customAiService ?? new AiService(ollamaClient, projectService, editorService, undefined, config.aiMode);
 
   const requestHandler = createRequestHandler(
     config,
     ollamaClient,
     clientDirOverride,
     projectService,
-    editorService
+    editorService,
+    aiService
   );
   const server = http.createServer(requestHandler);
 
@@ -58,7 +63,7 @@ export function startServer(
         });
       };
 
-      resolve({ server, config, projectService, editorService, close });
+      resolve({ server, config, projectService, editorService, aiService, close });
     });
   });
 }
@@ -74,7 +79,11 @@ if (isMainModule) {
       .then(({ close }) => {
         console.log(`[LazyDev] Local server listening at http://${config.host}:${config.port}`);
         console.log(`[LazyDev] Security check: Bound exclusively to loopback (${config.host})`);
-        console.log(`[LazyDev] Ollama target: ${config.ollamaHost}`);
+        if (config.aiMode === 'demo') {
+          console.log('[LazyDev] Mode: DEMO MODE (LAZYDEV_AI_MODE=demo) — Ollama will not be contacted.');
+        } else {
+          console.log(`[LazyDev] Mode: OLLAMA (${config.ollamaHost})`);
+        }
 
         const handleShutdown = (signal: string) => {
           console.log(`\n[LazyDev] Received ${signal}. Shutting down gracefully...`);

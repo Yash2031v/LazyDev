@@ -184,6 +184,17 @@ body {
   box-shadow: 0 0 6px var(--accent-emerald);
 }
 
+.status-demo {
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.status-demo .status-dot {
+  background-color: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
 /* Main Container: 2-column desktop layout */
 .main-container {
   display: grid;
@@ -944,4 +955,70 @@ code {
   background-color: rgba(100, 116, 139, 0.15);
   color: #cbd5e1;
   border: 1px solid rgba(100, 116, 139, 0.35);
+}
+
+/* Milestone 4: AI Task Assistant Styles */
+.ai-assistant-section {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-prominent);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.ai-controls-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 640px) {
+  .ai-controls-row {
+    flex-direction: column;
+  }
+}
+
+.ai-status-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(56, 139, 253, 0.2);
+  border-top-color: #58a6ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-demo-banner {
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-top: 10px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
 }

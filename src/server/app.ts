@@ -25,6 +25,8 @@ async function resolveClientDir(): Promise<string> {
 
 import { EditorService, ProposalError, ProposalNotFoundError, ProposalConflictError } from './editor/editor-service.js';
 import type { ProposalCreateRequest } from './editor/types.js';
+import { OllamaChatError } from './ollama.js';
+import { AiService, AiServiceError, type AiTaskRequest } from './ai/ai-service.js';
 
 export class PayloadTooLargeError extends Error {
   constructor(message: string) {
@@ -76,11 +78,13 @@ export function createRequestHandler(
   ollamaClient: OllamaClient,
   clientDirOverride?: string,
   projectServiceOverride?: ProjectService,
-  editorServiceOverride?: EditorService
+  editorServiceOverride?: EditorService,
+  aiServiceOverride?: AiService
 ) {
   const startTime = Date.now();
   const projectService = projectServiceOverride ?? new ProjectService();
   const editorService = editorServiceOverride ?? new EditorService();
+  const aiService = aiServiceOverride ?? new AiService(ollamaClient, projectService, editorService, undefined, config.aiMode);
 
   return async function requestHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
@@ -125,14 +129,24 @@ export function createRequestHandler(
           return;
         }
 
-        const ollamaStatus = await ollamaClient.checkStatus();
+        const isDemo = config.aiMode === 'demo';
+        const ollamaStatus = isDemo
+          ? {
+              connected: false,
+              endpoint: 'none (demo mode)',
+              models: ['demo-sample-model (offline sample)'],
+              details: 'Demo Mode — no AI model connected.',
+              latencyMs: null
+            }
+          : await ollamaClient.checkStatus();
 
         sendJson(res, 200, {
           app: {
             name: 'LazyDev',
             version: '0.1.0',
-            milestone: 'Milestone 3: Permission-Gated File Editing and Diff Engine',
-            environment: 'local'
+            milestone: 'Milestone 4: Local AI Assistant & Permission-Gated Edit Automation',
+            environment: 'local',
+            aiMode: config.aiMode
           },
           runtime: {
             node: process.version,
@@ -143,7 +157,8 @@ export function createRequestHandler(
             hasActiveProject: projectService.hasActiveProject(),
             root: projectService.getProjectRoot()
           },
-          ollama: ollamaStatus
+          ollama: ollamaStatus,
+          aiMode: config.aiMode
         });
         return;
       }
@@ -505,7 +520,106 @@ export function createRequestHandler(
         return;
       }
 
-      // 5. Static Assets
+      // 5. AI Assistant Endpoints (Milestone 4)
+      if (pathname === '/api/ai/models') {
+        if (method !== 'GET') {
+          res.setHeader('Allow', 'GET');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const models = await aiService.getAvailableModels();
+          sendJson(res, 200, {
+            models,
+            mode: config.aiMode
+          });
+          return;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(res, 500, `Failed to fetch models: ${msg}`);
+          return;
+        }
+      }
+
+      if (pathname === '/api/ai/task') {
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const body = await parseJsonBody<AiTaskRequest>(req);
+          const result = await aiService.executeTask(body);
+          sendJson(res, 201, {
+            message: 'AI edit proposal staged successfully.',
+            result
+          });
+          return;
+        } catch (err: unknown) {
+          if (err instanceof PayloadTooLargeError) {
+            sendError(res, 413, err.message);
+            return;
+          }
+          if (err instanceof AiServiceError) {
+            sendError(res, 400, err.message);
+            return;
+          }
+          if (err instanceof OllamaChatError) {
+            if (err.code === 'OFFLINE') {
+              sendError(res, 503, 'Local Ollama runtime is offline or unreachable.');
+              return;
+            }
+            if (err.code === 'TIMEOUT') {
+              sendError(res, 504, 'AI task execution timed out.');
+              return;
+            }
+            if (err.code === 'ABORTED') {
+              sendError(res, 400, 'AI task was cancelled.');
+              return;
+            }
+            if (err.code === 'PAYLOAD_TOO_LARGE') {
+              sendError(res, 413, err.message);
+              return;
+            }
+            sendError(res, 400, err.message);
+            return;
+          }
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(res, 400, msg);
+          return;
+        }
+      }
+
+      if (pathname === '/api/ai/cancel') {
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const body = await parseJsonBody<{ taskId?: string }>(req);
+          if (!body.taskId || typeof body.taskId !== 'string') {
+            sendError(res, 400, 'Missing or invalid "taskId".');
+            return;
+          }
+
+          const cancelled = aiService.cancelTask(body.taskId);
+          sendJson(res, 200, {
+            message: cancelled ? 'Task cancelled successfully.' : 'Task was not active or already completed.',
+            cancelled
+          });
+          return;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(res, 400, msg);
+          return;
+        }
+      }
+
+      // 6. Static Assets
       if (method === 'GET' || method === 'HEAD') {
         const clientDir = clientDirOverride ?? (await resolveClientDir());
 

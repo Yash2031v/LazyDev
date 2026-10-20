@@ -59,7 +59,18 @@
   const proposalApproveBtn = document.getElementById('proposal-approve-btn');
   const proposalApplyBtn = document.getElementById('proposal-apply-btn');
 
+  // Milestone 4: AI Assistant Elements
+  const aiModelSelect = document.getElementById('ai-model-select');
+  const aiTargetFile = document.getElementById('ai-target-file');
+  const aiPromptInput = document.getElementById('ai-prompt-input');
+  const aiGenerateBtn = document.getElementById('ai-generate-btn');
+  const aiCancelBtn = document.getElementById('ai-cancel-btn');
+  const aiStatusContainer = document.getElementById('ai-status-container');
+  const aiStatusMessage = document.getElementById('ai-status-message');
+
+  let activeAiTaskId = null;
   let currentProposal = null;
+  let currentAiMode = 'ollama';
   const proposalTokens = new Map(); // proposalId -> approvalToken
 
   function formatBytes(bytes) {
@@ -113,12 +124,23 @@
   }
 
   function renderStatus(data) {
+    const isDemo = data.aiMode === 'demo' || data.app?.aiMode === 'demo';
+    currentAiMode = isDemo ? 'demo' : 'ollama';
+
+    const aiDemoBanner = document.getElementById('ai-demo-banner');
+    if (aiDemoBanner) {
+      aiDemoBanner.style.display = isDemo ? 'flex' : 'none';
+    }
+
     const ollama = data.ollama || {};
     const isConnected = Boolean(ollama.connected);
 
     // Pill
     if (ollamaPill && ollamaStatusText) {
-      if (isConnected) {
+      if (isDemo) {
+        ollamaPill.className = 'ollama-pill status-demo';
+        ollamaStatusText.textContent = 'Demo Mode — no AI model connected.';
+      } else if (isConnected) {
         ollamaPill.className = 'ollama-pill status-connected';
         ollamaStatusText.textContent = `Ollama: Connected (${ollama.models ? ollama.models.length : 0})`;
       } else {
@@ -127,14 +149,25 @@
       }
     }
 
+    loadAiModels(ollama.models || [], isDemo);
+
     // Status Cards
     if (cardOllamaState) {
-      cardOllamaState.textContent = isConnected ? 'Connected' : 'Offline / Standby';
-      cardOllamaState.style.color = isConnected ? 'var(--accent-emerald)' : 'var(--status-offline)';
+      if (isDemo) {
+        cardOllamaState.textContent = 'Demo Mode';
+        cardOllamaState.style.color = '#f59e0b';
+      } else {
+        cardOllamaState.textContent = isConnected ? 'Connected' : 'Offline / Standby';
+        cardOllamaState.style.color = isConnected ? 'var(--accent-emerald)' : 'var(--status-offline)';
+      }
     }
 
     if (cardOllamaDetails) {
-      cardOllamaDetails.textContent = ollama.details || 'No details available.';
+      if (isDemo) {
+        cardOllamaDetails.textContent = 'Demo Mode active — no AI model connected. Deterministic sample proposals enabled.';
+      } else {
+        cardOllamaDetails.textContent = ollama.details || 'No details available.';
+      }
     }
 
     // Telemetry
@@ -276,7 +309,12 @@
           <span>${file.relativePath}</span>
           <span class="file-size">${formatBytes(file.sizeBytes)}</span>
         `;
-        item.addEventListener('click', () => viewFile(file.relativePath));
+        item.addEventListener('click', () => {
+          viewFile(file.relativePath);
+          if (aiTargetFile) {
+            aiTargetFile.value = file.relativePath;
+          }
+        });
         fileListContainer.appendChild(item);
       }
     }
@@ -417,6 +455,143 @@
     }
   }
 
+  // --- Milestone 4: AI Task Assistant Logic ---
+
+  async function loadAiModels(modelsFromStatus, isDemoMode) {
+    if (!aiModelSelect) return;
+    try {
+      let models = modelsFromStatus;
+      let isDemo = Boolean(isDemoMode || currentAiMode === 'demo');
+      if (!models || models.length === 0) {
+        const res = await fetch('/api/ai/models', { headers: { 'Accept': 'application/json' } });
+        if (res.ok) {
+          const data = await res.json();
+          models = data.models || [];
+          if (data.mode === 'demo') isDemo = true;
+        }
+      }
+
+      if (isDemo) {
+        currentAiMode = 'demo';
+        const demoBanner = document.getElementById('ai-demo-banner');
+        if (demoBanner) demoBanner.style.display = 'flex';
+        if (aiGenerateBtn) aiGenerateBtn.textContent = 'Generate Sample Proposal (Demo Mode)';
+      } else {
+        if (aiGenerateBtn) aiGenerateBtn.textContent = 'Generate Proposal with AI';
+      }
+
+      if (!models || models.length === 0) {
+        aiModelSelect.innerHTML = '<option value="">No models available (check Ollama)</option>';
+        aiModelSelect.disabled = true;
+        if (aiGenerateBtn) aiGenerateBtn.disabled = true;
+        return;
+      }
+
+      const previousValue = aiModelSelect.value;
+      aiModelSelect.innerHTML = '';
+      aiModelSelect.disabled = false;
+      if (aiGenerateBtn) aiGenerateBtn.disabled = false;
+
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = isDemo ? `${m} [Deterministic Sample]` : m;
+        aiModelSelect.appendChild(opt);
+      }
+
+      if (previousValue && models.includes(previousValue)) {
+        aiModelSelect.value = previousValue;
+      }
+    } catch {
+      // Nonfatal model load failure
+    }
+  }
+
+  async function startAiTask() {
+    if (!aiModelSelect || !aiTargetFile || !aiPromptInput) return;
+
+    const model = aiModelSelect.value;
+    const targetFilePath = aiTargetFile.value.trim();
+    const taskPrompt = aiPromptInput.value.trim();
+
+    if (!model) {
+      alert('Please select an Ollama model.');
+      return;
+    }
+    if (!targetFilePath) {
+      alert('Please specify a target file path (or click a file in the Permitted Files list).');
+      return;
+    }
+    if (!taskPrompt) {
+      alert('Please enter task instructions.');
+      return;
+    }
+
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    activeAiTaskId = taskId;
+
+    aiGenerateBtn.disabled = true;
+    aiCancelBtn.style.display = 'inline-block';
+    aiStatusContainer.style.display = 'flex';
+    aiStatusMessage.textContent = currentAiMode === 'demo'
+      ? 'Generating sample edit proposal (Demo Mode — no AI)...'
+      : `Querying local model "${model}"... (Isolated cancellation enabled)`;
+
+    try {
+      const res = await fetch('/api/ai/task', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ model, targetFilePath, taskPrompt, taskId })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.message || 'AI task failed.');
+      }
+
+      aiStatusMessage.textContent = currentAiMode === 'demo'
+        ? '✓ Sample edit proposal generated and staged!'
+        : '✓ AI edit proposal generated and staged!';
+      aiPromptInput.value = '';
+
+      // Reload proposals list and auto-open diff inspection modal
+      await loadProposals();
+      if (data.result?.proposal?.id) {
+        if (data.result.proposal.approvalToken) {
+          proposalTokens.set(data.result.proposal.id, data.result.proposal.approvalToken);
+        }
+        await openProposalModal(data.result.proposal.id, data.result.proposal);
+      }
+    } catch (err) {
+      alert(`AI Task Error: ${err.message}`);
+    } finally {
+      activeAiTaskId = null;
+      aiGenerateBtn.disabled = false;
+      aiCancelBtn.style.display = 'none';
+      setTimeout(() => {
+        aiStatusContainer.style.display = 'none';
+      }, 4000);
+    }
+  }
+
+  async function cancelAiTask() {
+    if (!activeAiTaskId) return;
+    aiStatusMessage.textContent = 'Cancelling task...';
+    try {
+      await fetch('/api/ai/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ taskId: activeAiTaskId })
+      });
+    } catch {
+      // Nonfatal cancel failure
+    }
+  }
+
   async function createProposalAction() {
     if (!proposalPathInput || !proposalContentInput) return;
     const relativePath = proposalPathInput.value.trim();
@@ -441,8 +616,8 @@
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error?.message || 'Failed to create proposal.');
+      if (!res.ok || !data.proposal) {
+        throw new Error(data.error?.message || data.message || 'Failed to create proposal.');
       }
 
       // Cache token for this proposal session
@@ -453,7 +628,7 @@
       proposalPathInput.value = '';
       proposalContentInput.value = '';
       await loadProposals();
-      openProposalModal(data.proposal.id);
+      await openProposalModal(data.proposal.id, data.proposal);
     } catch (err) {
       alert(`Proposal Error: ${err.message}`);
     } finally {
@@ -462,18 +637,27 @@
     }
   }
 
-  async function openProposalModal(proposalId) {
+  async function openProposalModal(proposalId, preloadedProposal) {
     if (!proposalModal) return;
+    if (!proposalId && !preloadedProposal) {
+      alert('Cannot open proposal: No valid proposal selected.');
+      return;
+    }
+
     try {
-      const res = await fetch(`/api/project/proposals/${encodeURIComponent(proposalId)}`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error?.message || 'Failed to load proposal details.');
+      if (preloadedProposal && preloadedProposal.diff) {
+        currentProposal = preloadedProposal;
+      } else {
+        const res = await fetch(`/api/project/proposals/${encodeURIComponent(proposalId)}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        const data = await res.json();
+        if (!res.ok || !data.proposal) {
+          throw new Error(data.error?.message || data.message || 'Failed to load proposal details.');
+        }
+        currentProposal = data.proposal;
       }
 
-      currentProposal = data.proposal;
       if (currentProposal.approvalToken) {
         proposalTokens.set(currentProposal.id, currentProposal.approvalToken);
       }
@@ -481,7 +665,7 @@
       renderProposalModal(currentProposal);
       proposalModal.style.display = 'flex';
     } catch (err) {
-      alert(err.message);
+      alert(`Proposal View Error: ${err.message}`);
     }
   }
 
@@ -699,6 +883,14 @@
     });
   }
 
+  if (aiGenerateBtn) {
+    aiGenerateBtn.addEventListener('click', startAiTask);
+  }
+
+  if (aiCancelBtn) {
+    aiCancelBtn.addEventListener('click', cancelAiTask);
+  }
+
   if (createProposalBtn) {
     createProposalBtn.addEventListener('click', createProposalAction);
   }
@@ -755,6 +947,7 @@
   fetchHealth();
   checkActiveProject();
   loadProposals();
+  loadAiModels();
 
   // Background polling every 10 seconds
   setInterval(() => {

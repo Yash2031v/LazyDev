@@ -52,9 +52,86 @@ describe('Configuration Loader', () => {
     );
   });
 
-  test('throws on malformed OLLAMA_HOST', () => {
+  test('throws on malformed OLLAMA_HOST or non-http(s) protocol', () => {
     assert.throws(() => loadConfig({ OLLAMA_HOST: 'not-a-valid-url' }), ConfigError);
     assert.throws(() => loadConfig({ OLLAMA_HOST: 'ftp://127.0.0.1:11434' }), ConfigError);
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'file:///etc/passwd' }), ConfigError);
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'ws://127.0.0.1:11434' }), ConfigError);
+  });
+
+  test('permits valid loopback endpoints for OLLAMA_HOST', () => {
+    const c1 = loadConfig({ OLLAMA_HOST: 'http://127.0.0.1:11434' });
+    assert.equal(c1.ollamaHost, 'http://127.0.0.1:11434');
+
+    const c2 = loadConfig({ OLLAMA_HOST: 'http://localhost:11434' });
+    assert.equal(c2.ollamaHost, 'http://localhost:11434');
+
+    const c3 = loadConfig({ OLLAMA_HOST: 'http://[::1]:11434' });
+    assert.equal(c3.ollamaHost, 'http://[::1]:11434');
+
+    const c4 = loadConfig({ OLLAMA_HOST: 'https://127.0.0.1:8443' });
+    assert.equal(c4.ollamaHost, 'https://127.0.0.1:8443');
+  });
+
+  test('strictly rejects external DNS names and remote hosts for OLLAMA_HOST', () => {
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://example.com:11434' }),
+      (err: Error) => {
+        assert.match(err.message, /only permits connecting to local loopback endpoints/i);
+        return true;
+      }
+    );
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'https://api.openai.com/v1' }),
+      ConfigError
+    );
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://ollama-remote-server:11434' }),
+      ConfigError
+    );
+  });
+
+  test('strictly rejects private and LAN IPs for OLLAMA_HOST', () => {
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'http://192.168.1.50:11434' }), ConfigError);
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'http://10.0.0.1:11434' }), ConfigError);
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'http://172.16.0.1:11434' }), ConfigError);
+    assert.throws(() => loadConfig({ OLLAMA_HOST: 'http://169.254.169.254:11434' }), ConfigError);
+  });
+
+  test('strictly rejects credentials, query parameters, and hash fragments in OLLAMA_HOST', () => {
+    // Credentials in URL
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://user:pass@127.0.0.1:11434' }),
+      (err: Error) => {
+        assert.match(err.message, /Credentials.*forbidden/i);
+        return true;
+      }
+    );
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://admin@localhost:11434' }),
+      (err: Error) => {
+        assert.match(err.message, /Credentials.*forbidden/i);
+        return true;
+      }
+    );
+
+    // Query parameters
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://127.0.0.1:11434?param=value' }),
+      (err: Error) => {
+        assert.match(err.message, /Query parameters.*forbidden/i);
+        return true;
+      }
+    );
+
+    // Hash fragment
+    assert.throws(
+      () => loadConfig({ OLLAMA_HOST: 'http://127.0.0.1:11434#section' }),
+      (err: Error) => {
+        assert.match(err.message, /Hash fragments.*forbidden/i);
+        return true;
+      }
+    );
   });
 
   test('throws on non-positive OLLAMA_TIMEOUT_MS', () => {
