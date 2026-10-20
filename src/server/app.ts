@@ -1,21 +1,16 @@
-/**
- * LazyDev HTTP Application
- * Core request routing, static file delivery, and API endpoints.
- */
-
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AppConfig } from './config.js';
 import { OllamaClient } from './ollama.js';
-import { applySecurityHeaders, sendError, sendJson, validateHostHeader } from './security.js';
+import { applySecurityHeaders, sendError, sendJson, validateHostHeader, validateOriginHeader } from './security.js';
+import { ProjectService, ProjectAccessError } from './project/project-service.js';
+import { PathValidationError, SymlinkEscapeError } from './project/path-validator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In dev mode (tsx src/server/index.ts) client is at ../client
-// In built mode (node dist/server/index.js) client is at ../../src/client or copy
 const DEV_CLIENT_DIR = path.resolve(__dirname, '../client');
 const PROD_CLIENT_DIR = path.resolve(__dirname, '../../src/client');
 
@@ -28,29 +23,48 @@ async function resolveClientDir(): Promise<string> {
   }
 }
 
-import { ProjectService, ProjectAccessError } from './project/project-service.js';
-import { PathValidationError, SymlinkEscapeError } from './project/path-validator.js';
+export class PayloadTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PayloadTooLargeError';
+  }
+}
 
 async function parseJsonBody<T>(req: IncomingMessage, maxBytes = 64 * 1024): Promise<T> {
+  const contentType = req.headers['content-type'];
+  if (contentType && !contentType.toLowerCase().includes('application/json')) {
+    throw new Error('Content-Type must be application/json');
+  }
+
   return new Promise((resolve, reject) => {
     let raw = '';
     let bytes = 0;
+    let exceeded = false;
+
     req.on('data', (chunk: Buffer) => {
+      if (exceeded) return;
       bytes += chunk.length;
       if (bytes > maxBytes) {
-        reject(new Error('Payload too large'));
+        exceeded = true;
+        req.resume(); // drain incoming chunks without buffering
+        reject(new PayloadTooLargeError(`Request payload exceeds maximum allowed size of ${maxBytes} bytes.`));
         return;
       }
       raw += chunk.toString('utf-8');
     });
+
     req.on('end', () => {
+      if (exceeded) return;
       try {
         resolve(JSON.parse(raw || '{}') as T);
       } catch {
         reject(new Error('Invalid JSON'));
       }
     });
-    req.on('error', reject);
+
+    req.on('error', (err) => {
+      if (!exceeded) reject(err);
+    });
   });
 }
 
@@ -68,6 +82,12 @@ export function createRequestHandler(
       // 1. Validate Host Header
       if (!validateHostHeader(req, config.allowedHosts)) {
         sendError(res, 400, 'Invalid or untrusted Host header.');
+        return;
+      }
+
+      // 2. Validate Origin Header & Sec-Fetch-Site (anti-CSRF and cross-origin protection)
+      if (!validateOriginHeader(req, config.allowedHosts)) {
+        sendError(res, 403, 'Untrusted or cross-origin request blocked.');
         return;
       }
 
@@ -149,6 +169,10 @@ export function createRequestHandler(
             });
             return;
           } catch (err: unknown) {
+            if (err instanceof PayloadTooLargeError) {
+              sendError(res, 413, err.message);
+              return;
+            }
             if (err instanceof PathValidationError) {
               sendError(res, 400, err.message);
               return;
@@ -257,11 +281,17 @@ export function createRequestHandler(
           sendJson(res, 200, searchResult);
           return;
         } catch (err: unknown) {
+          if (err instanceof PayloadTooLargeError) {
+            sendError(res, 413, err.message);
+            return;
+          }
           if (err instanceof PathValidationError || err instanceof ProjectAccessError) {
             sendError(res, 400, err.message);
             return;
           }
-          throw err;
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(res, 400, msg);
+          return;
         }
       }
 

@@ -16,7 +16,7 @@ import type {
 import { validateProjectRoot, resolveSafeRelativePath, PathValidationError } from './path-validator.js';
 import { IgnoreEngine } from './ignore-rules.js';
 import { CodebaseScanner, DEFAULT_SCAN_LIMITS } from './scanner.js';
-import { isBinaryFile } from './binary-detector.js';
+import { isBinaryExtension } from './binary-detector.js';
 
 export class ProjectAccessError extends Error {
   constructor(message: string) {
@@ -79,11 +79,13 @@ export class ProjectService {
    * Re-scans current active project root.
    */
   async rescan(): Promise<ScanResult> {
-    if (!this.canonicalRoot || !this.ignoreEngine) {
+    const canonical = this.canonicalRoot;
+    const ignoreEngine = this.ignoreEngine;
+    if (!canonical || !ignoreEngine) {
       throw new ProjectAccessError('No active project root set.');
     }
 
-    const scanner = new CodebaseScanner(this.canonicalRoot, this.ignoreEngine, this.scanLimits);
+    const scanner = new CodebaseScanner(canonical, ignoreEngine, this.scanLimits);
     const scanResult = await scanner.scan();
     this.cachedScan = scanResult;
     return scanResult;
@@ -136,61 +138,87 @@ export class ProjectService {
   /**
    * Reads the content of a permitted text file inside the project root.
    * Rejects secret files, binary files, oversized files, and traversal attempts.
+   * Uses an atomic file handle to prevent time-of-check/time-of-use (TOCTOU) races.
    */
   async readFile(relativePath: string): Promise<ReadFileResult> {
-    if (!this.canonicalRoot || !this.ignoreEngine) {
+    const canonicalRoot = this.canonicalRoot;
+    const ignoreEngine = this.ignoreEngine;
+    if (!canonicalRoot || !ignoreEngine) {
       throw new ProjectAccessError('No active project root set.');
     }
 
     const { canonicalPath, normalizedRelative } = await resolveSafeRelativePath(
-      this.canonicalRoot,
+      canonicalRoot,
       relativePath,
       true
     );
 
     // 1. Strictly forbid reading files matching secret patterns
-    if (this.ignoreEngine.isSecret(normalizedRelative)) {
+    if (ignoreEngine.isSecret(normalizedRelative)) {
       throw new ProjectAccessError(`Access denied: "${normalizedRelative}" is protected as a secret credential.`);
     }
 
     // 2. Check general ignore engine rules
-    const ignoreCheck = this.ignoreEngine.shouldIgnore(normalizedRelative, false);
+    const ignoreCheck = ignoreEngine.shouldIgnore(normalizedRelative, false);
     if (ignoreCheck.ignored) {
       throw new ProjectAccessError(`Access denied: "${normalizedRelative}" is an excluded path.`);
     }
 
-    // 3. Size check
-    const stat = await fs.stat(canonicalPath);
-    if (!stat.isFile()) {
-      throw new ProjectAccessError(`Path "${normalizedRelative}" is not a file.`);
-    }
-
-    if (stat.size > this.scanLimits.maxFileSizeBytes) {
-      throw new ProjectAccessError(
-        `File "${normalizedRelative}" (${stat.size} bytes) exceeds the maximum allowed size of ${this.scanLimits.maxFileSizeBytes} bytes.`
-      );
-    }
-
-    // 4. Binary file check
-    if (await isBinaryFile(canonicalPath)) {
+    // Fast-path binary extension check
+    if (isBinaryExtension(normalizedRelative)) {
       throw new ProjectAccessError(`File "${normalizedRelative}" is a binary file and cannot be read as text.`);
     }
 
-    const content = await fs.readFile(canonicalPath, 'utf-8');
+    // 3. Open single file handle to prevent TOCTOU races between stat, binary probe, and reading
+    let handle: fs.FileHandle | null = null;
+    try {
+      handle = await fs.open(canonicalPath, 'r');
+      const stat = await handle.stat();
 
-    return {
-      relativePath: normalizedRelative,
-      content,
-      sizeBytes: stat.size,
-      modifiedTime: stat.mtime.toISOString()
-    };
+      if (!stat.isFile()) {
+        throw new ProjectAccessError(`Path "${normalizedRelative}" is not a file.`);
+      }
+
+      if (stat.size > this.scanLimits.maxFileSizeBytes) {
+        throw new ProjectAccessError(
+          `File "${normalizedRelative}" (${stat.size} bytes) exceeds the maximum allowed size of ${this.scanLimits.maxFileSizeBytes} bytes.`
+        );
+      }
+
+      // 4. Header null-byte check on the open handle
+      const probeSize = Math.min(512, stat.size);
+      if (probeSize > 0) {
+        const probeBuffer = Buffer.alloc(probeSize);
+        const { bytesRead } = await handle.read(probeBuffer, 0, probeSize, 0);
+        for (let i = 0; i < bytesRead; i++) {
+          if (probeBuffer[i] === 0x00) {
+            throw new ProjectAccessError(`File "${normalizedRelative}" is a binary file and cannot be read as text.`);
+          }
+        }
+      }
+
+      // 5. Read validated content from the same handle
+      const content = await handle.readFile({ encoding: 'utf-8' });
+
+      return {
+        relativePath: normalizedRelative,
+        content,
+        sizeBytes: stat.size,
+        modifiedTime: stat.mtime.toISOString()
+      };
+    } finally {
+      if (handle) {
+        await handle.close().catch(() => {});
+      }
+    }
   }
 
   /**
    * Searches for a text query across all permitted project text files.
    */
   async searchFiles(options: SearchOptions): Promise<SearchResult> {
-    if (!this.canonicalRoot) {
+    const canonicalRoot = this.canonicalRoot;
+    if (!canonicalRoot) {
       throw new ProjectAccessError('No active project root set.');
     }
 
@@ -202,8 +230,14 @@ export class ProjectService {
       throw new PathValidationError('Search query exceeds maximum length of 200 characters.');
     }
 
+    if (options.maxResults !== undefined) {
+      if (typeof options.maxResults !== 'number' || !Number.isInteger(options.maxResults) || options.maxResults <= 0) {
+        throw new PathValidationError('maxResults must be a positive integer.');
+      }
+    }
+
     const scan = await this.getScanResult();
-    const caseSensitive = options.caseSensitive ?? false;
+    const caseSensitive = options.caseSensitive === true;
     const maxResults = Math.min(Math.max(options.maxResults ?? 100, 1), 500);
     const searchQuery = caseSensitive ? options.query : options.query.toLowerCase();
 
@@ -216,7 +250,7 @@ export class ProjectService {
         break;
       }
 
-      const filePath = path.join(this.canonicalRoot, file.relativePath);
+      const filePath = path.join(canonicalRoot, file.relativePath);
 
       let content: string;
       try {

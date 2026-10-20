@@ -16,6 +16,8 @@ export const DEFAULT_EXCLUDED_DIRECTORIES = new Set([
   // Build outputs & caches
   'dist', 'build', 'out', 'coverage', '.next', '.nuxt', '.turbo', '.cache',
   'target', 'bin', 'obj', '__pycache__', '.pytest_cache',
+  // Sensitive configuration and credential directories
+  '.ssh', '.aws', '.azure', '.kube', '.gnupg',
   // IDEs and local tooling
   '.vscode', '.idea', '.vs'
 ]);
@@ -26,9 +28,12 @@ export const SECRET_FILE_PATTERNS: readonly RegExp[] = [
   /^\.env(\..+)?$/i,
   /\.env$/i,
 
-  // Private keys and certificates
-  /\.(pem|key|pkcs12|pfx|crt|der|cer)$/i,
+  // Private keys, keystores, and certificates
+  /\.(pem|key|pkcs12|pfx|crt|der|cer|keystore|jks)$/i,
   /^id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/i,
+
+  // Package registry & network credentials
+  /^\.(npmrc|pypirc|netrc|git-credentials)$/i,
 
   // Tokens, credentials, and keystores
   /^(credentials|token|tokens|secrets)(\.json|\.yml|\.yaml|\.txt)?$/i,
@@ -177,6 +182,21 @@ export class IgnoreEngine {
 
     for (const rule of this.gitIgnoreRules) {
       if (rule.isDirectoryOnly && !isDirectory) {
+        // If it's a directory-only rule, test if any parent directory segment matches the rule
+        let matchedAncestor = false;
+        let runningPath = '';
+        for (let i = 0; i < segments.length - 1; i++) {
+          const seg = segments[i];
+          if (!seg) continue;
+          runningPath = runningPath ? `${runningPath}/${seg}` : seg;
+          if (rule.regex.test(runningPath)) {
+            matchedAncestor = true;
+            break;
+          }
+        }
+        if (matchedAncestor) {
+          ignoredByGit = !rule.isNegated;
+        }
         continue;
       }
 

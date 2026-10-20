@@ -48,6 +48,47 @@ export function validateHostHeader(req: IncomingMessage, allowedHosts: readonly 
   });
 }
 
+/**
+ * Validates Origin and Sec-Fetch-Site headers to protect against cross-site request forgery
+ * and malicious external browser web pages querying local loopback endpoints.
+ */
+export function validateOriginHeader(
+  req: IncomingMessage,
+  allowedHosts: readonly string[]
+): boolean {
+  // Reject explicit cross-site fetch metadata from modern browsers
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (secFetchSite === 'cross-site') {
+    return false;
+  }
+
+  const originHeader = req.headers['origin'];
+  // If no Origin header is present (direct CLI, curl, same-origin top-level navigation), permit
+  if (!originHeader) {
+    return true;
+  }
+
+  try {
+    const originUrl = new URL(originHeader.trim());
+    // Only allow http or https loopback origins
+    if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
+      return false;
+    }
+
+    const originHost = originUrl.host.toLowerCase();
+    return allowedHosts.some(allowed => {
+      const lowerAllowed = allowed.toLowerCase();
+      if (lowerAllowed.endsWith(':*')) {
+        const prefix = lowerAllowed.slice(0, -2);
+        return originHost === prefix || originHost.startsWith(prefix + ':');
+      }
+      return lowerAllowed === originHost;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
   applySecurityHeaders(res);
   const payload = JSON.stringify(data);

@@ -116,23 +116,37 @@ export async function resolveSafeRelativePath(
     throw new PathValidationError('Relative path must be a non-empty string.');
   }
 
+  // Defend against single and nested percent-encoding traversal
+  let cleanRelative = relativePath;
+  let decodeRounds = 0;
+  while (cleanRelative.includes('%') && decodeRounds < 3) {
+    try {
+      const decoded = decodeURIComponent(cleanRelative);
+      if (decoded === cleanRelative) break;
+      cleanRelative = decoded;
+      decodeRounds++;
+    } catch {
+      throw new PathValidationError('Malformed percent-encoded path.');
+    }
+  }
+
   // Reject null bytes
-  if (relativePath.includes('\0')) {
+  if (cleanRelative.includes('\0')) {
     throw new PathValidationError('Null bytes are forbidden in paths.');
   }
 
   // Reject absolute paths first
-  if (path.isAbsolute(relativePath)) {
+  if (path.isAbsolute(cleanRelative)) {
     throw new PathValidationError('Absolute paths are forbidden. Specify a relative path from the project root.');
   }
 
   // Reject Windows alternate data streams (e.g. "file.txt:stream")
-  if (relativePath.includes(':')) {
+  if (cleanRelative.includes(':')) {
     throw new PathValidationError('Colons are forbidden in relative paths.');
   }
 
   // Normalize path and reject directory traversal
-  const normalized = path.normalize(relativePath).replace(/^[\\/]+/, '');
+  const normalized = path.normalize(cleanRelative).replace(/^[\\/]+/, '');
   if (normalized === '..' || normalized.startsWith('..' + path.sep) || normalized.includes(path.sep + '..' + path.sep)) {
     throw new PathValidationError(`Directory traversal outside project root is forbidden: "${relativePath}".`);
   }
