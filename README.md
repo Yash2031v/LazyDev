@@ -311,7 +311,7 @@ LazyDev is pre-configured for one-click deployment as a Web Service on [Render](
    - `LAZYDEV_PUBLIC_DEMO`: `true`
    - `LAZYDEV_AI_MODE`: `demo`
    - `HOST`: `0.0.0.0`
-   - `ALLOWED_HOSTS`: `*.onrender.com,localhost:*,127.0.0.1:*`
+   - `ALLOWED_HOSTS`: `lazydev-demo.onrender.com,*.onrender.com,onrender.com,localhost:*,127.0.0.1:*`
 4. **Health Check Path**:
    - Set Health Check Path to: `/api/health`
 5. **Deploy**:

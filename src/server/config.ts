@@ -138,6 +138,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedHostsList = env['ALLOWED_HOSTS'].split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
   } else if (isPublicDemo) {
     allowedHostsList = [
+      'lazydev-demo.onrender.com',
       'localhost',
       '127.0.0.1',
       'localhost:*',

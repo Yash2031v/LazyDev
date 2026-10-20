@@ -79,7 +79,7 @@ describe('Public Demo Mode Isolation & Reliability', () => {
       LAZYDEV_AI_MODE: 'demo',
       PORT: '0',
       HOST: '127.0.0.1',
-      ALLOWED_HOSTS: '127.0.0.1:*,localhost:*,*.onrender.com'
+      ALLOWED_HOSTS: '127.0.0.1:*,localhost:*,lazydev-demo.onrender.com,*.onrender.com'
     });
 
     demoInstance = await startServer(testConfig);
@@ -342,5 +342,73 @@ describe('Public Demo Mode Isolation & Reliability', () => {
     assert.strictEqual(res.headers['x-frame-options'], 'DENY');
     assert.ok(res.body.includes('LazyDev'));
     assert.ok(res.body.includes('public-demo-banner'));
+  });
+
+  it('serves root route (/) for legitimate top-level browser navigation from external links', async () => {
+    // Simulates a user clicking on https://lazydev-demo.onrender.com from an external site (Render, GitHub, etc.)
+    const res = await makeRequest(demoPort, '/', {
+      headers: {
+        Host: 'lazydev-demo.onrender.com',
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document'
+      }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.headers['content-type'], 'text/html; charset=utf-8');
+    assert.strictEqual(res.headers['x-frame-options'], 'DENY');
+    assert.ok(res.body.includes('<!DOCTYPE html>'));
+    assert.ok(res.body.includes('LazyDev'));
+  });
+
+  it('permits API requests originating from the deployed domain', async () => {
+    const res = await makeRequest(demoPort, '/api/project/search', {
+      method: 'POST',
+      headers: {
+        Host: 'lazydev-demo.onrender.com',
+        Origin: 'https://lazydev-demo.onrender.com',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'cors',
+        'Content-Type': 'application/json',
+        'x-demo-session': 'deployed-origin-session'
+      },
+      body: JSON.stringify({ query: 'LazyDev' })
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.ok(Array.isArray(res.json.matches));
+  });
+
+  it('blocks cross-site API requests from untrusted external origins with 403', async () => {
+    const res = await makeRequest(demoPort, '/api/project/search', {
+      method: 'POST',
+      headers: {
+        Host: 'lazydev-demo.onrender.com',
+        Origin: 'https://evil-attacker.com',
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'cors',
+        'Content-Type': 'application/json',
+        'x-demo-session': 'untrusted-origin-session'
+      },
+      body: JSON.stringify({ query: 'LazyDev' })
+    });
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.json.error.message, 'Untrusted or cross-origin request blocked.');
+  });
+
+  it('blocks cross-site iframe embedding attempts with 403', async () => {
+    const res = await makeRequest(demoPort, '/', {
+      headers: {
+        Host: 'lazydev-demo.onrender.com',
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'iframe'
+      }
+    });
+
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.json.error.message, 'Untrusted or cross-origin request blocked.');
   });
 });

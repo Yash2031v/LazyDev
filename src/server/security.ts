@@ -31,14 +31,24 @@ export function applySecurityHeaders(res: ServerResponse): void {
 
 export function matchesHostPattern(candidateHost: string, pattern: string): boolean {
   const lowerCandidate = candidateHost.toLowerCase().trim();
-  const lowerPattern = pattern.toLowerCase().trim();
+  let lowerPattern = pattern.toLowerCase().trim();
+
+  // Strip protocol and path if pattern was specified as origin URL (e.g. https://domain.com/)
+  if (lowerPattern.startsWith('https://')) {
+    lowerPattern = lowerPattern.slice(8);
+  } else if (lowerPattern.startsWith('http://')) {
+    lowerPattern = lowerPattern.slice(7);
+  }
+  lowerPattern = lowerPattern.split('/')[0] || '';
+
   if (lowerPattern === '*') {
     return true;
   }
 
+  const candidateWithoutPort = lowerCandidate.split(':')[0] || '';
+
   if (lowerPattern.startsWith('*.')) {
     const suffix = lowerPattern.slice(2);
-    const candidateWithoutPort = lowerCandidate.split(':')[0] || '';
     return candidateWithoutPort === suffix || candidateWithoutPort.endsWith('.' + suffix);
   }
 
@@ -47,7 +57,19 @@ export function matchesHostPattern(candidateHost: string, pattern: string): bool
     return lowerCandidate === prefix || lowerCandidate.startsWith(prefix + ':');
   }
 
-  return lowerPattern === lowerCandidate;
+  if (lowerPattern === lowerCandidate) {
+    return true;
+  }
+
+  // Allow matching when candidate includes default HTTP/HTTPS ports (80 or 443)
+  if (
+    (lowerCandidate.endsWith(':443') || lowerCandidate.endsWith(':80')) &&
+    candidateWithoutPort === lowerPattern
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export function validateHostHeader(req: IncomingMessage, allowedHosts: readonly string[]): boolean {
@@ -60,26 +82,14 @@ export function validateHostHeader(req: IncomingMessage, allowedHosts: readonly 
   return allowedHosts.some(allowed => matchesHostPattern(normalizedHost, allowed));
 }
 
-/**
- * Validates Origin and Sec-Fetch-Site headers to protect against cross-site request forgery
- * and malicious external browser web pages querying local loopback endpoints.
- */
-export function validateOriginHeader(
-  req: IncomingMessage,
-  allowedHosts: readonly string[]
-): boolean {
-  // Reject explicit cross-site fetch metadata from modern browsers
-  const secFetchSite = req.headers['sec-fetch-site'];
-  if (secFetchSite === 'cross-site') {
-    return false;
+function getHeaderString(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
   }
+  return value;
+}
 
-  const originHeader = req.headers['origin'];
-  // If no Origin header is present (direct CLI, curl, same-origin top-level navigation), permit
-  if (!originHeader) {
-    return true;
-  }
-
+export function isTrustedOrigin(originHeader: string, allowedHosts: readonly string[]): boolean {
   try {
     const originUrl = new URL(originHeader.trim());
     if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
@@ -91,6 +101,53 @@ export function validateOriginHeader(
   } catch {
     return false;
   }
+}
+
+/**
+ * Validates Origin and Sec-Fetch-Site headers to protect against cross-site request forgery
+ * and malicious external browser web pages querying local loopback endpoints.
+ */
+export function validateOriginHeader(
+  req: IncomingMessage,
+  allowedHosts: readonly string[]
+): boolean {
+  const secFetchSite = getHeaderString(req.headers['sec-fetch-site']);
+  const secFetchMode = getHeaderString(req.headers['sec-fetch-mode']);
+  const secFetchDest = getHeaderString(req.headers['sec-fetch-dest']);
+  const originHeader = getHeaderString(req.headers['origin']);
+  const method = (req.method ?? 'GET').toUpperCase();
+
+  // If Sec-Fetch-Site indicates cross-site:
+  if (secFetchSite === 'cross-site') {
+    // Top-level document navigation (e.g. clicking a link to open the public app)
+    // is safe for read-only GET / HEAD.
+    // We reject iframe embedding (nested-document/iframe/embed/object) and cross-site mutations/fetches.
+    const isSafeTopLevelNavigation =
+      (method === 'GET' || method === 'HEAD') &&
+      secFetchMode === 'navigate' &&
+      secFetchDest !== 'iframe' &&
+      secFetchDest !== 'nested-document' &&
+      secFetchDest !== 'embed' &&
+      secFetchDest !== 'object';
+
+    if (!isSafeTopLevelNavigation) {
+      return false;
+    }
+
+    // If an Origin header is explicitly sent on the cross-site request, ensure it is trusted
+    if (originHeader) {
+      return isTrustedOrigin(originHeader, allowedHosts);
+    }
+
+    return true;
+  }
+
+  // If no Origin header is present (direct CLI, curl, same-origin top-level navigation), permit
+  if (!originHeader) {
+    return true;
+  }
+
+  return isTrustedOrigin(originHeader, allowedHosts);
 }
 
 export function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
