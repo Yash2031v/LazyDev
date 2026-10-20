@@ -361,7 +361,9 @@ export function createRequestHandler(
         if (!action && method === 'GET') {
           try {
             const proposal = await editorService.getProposal(proposalId, canonicalRoot);
-            sendJson(res, 200, { proposal });
+            // Defend against credential exposure: never leak approval token on public GET endpoint
+            const { approvalToken: _token, ...safeProposal } = proposal;
+            sendJson(res, 200, { proposal: safeProposal });
             return;
           } catch (err: unknown) {
             if (err instanceof ProposalNotFoundError) {
@@ -473,7 +475,8 @@ export function createRequestHandler(
               return;
             }
 
-            const result = await editorService.applyProposal(proposalId, body.approvalToken, canonicalRoot);
+            const ignoreEngine = projectService.getIgnoreEngine() ?? undefined;
+            const result = await editorService.applyProposal(proposalId, body.approvalToken, canonicalRoot, ignoreEngine);
             sendJson(res, 200, {
               message: 'File changes applied to disk successfully.',
               result

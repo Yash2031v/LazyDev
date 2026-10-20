@@ -334,4 +334,33 @@ describe('Editor & Proposal API Endpoints', () => {
 
     assert.equal(res.status, 403);
   });
+
+  test('GET /api/project/proposals/:id does NOT leak approvalToken to callers', async () => {
+    const createRes = await fetch(`${baseUrl}/api/project/proposals`, {
+      method: 'POST',
+      headers: {
+        host: `127.0.0.1:${testPort}`,
+        origin: `http://127.0.0.1:${testPort}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        relativePath: 'hello.txt',
+        newContent: 'Testing token redaction\n'
+      })
+    });
+    const { proposal } = await createRes.json() as any;
+    assert.ok(proposal.approvalToken);
+
+    // GET /api/project/proposals/:id must redact the token
+    const getRes = await fetch(`${baseUrl}/api/project/proposals/${proposal.id}`, {
+      headers: {
+        host: `127.0.0.1:${testPort}`,
+        origin: `http://127.0.0.1:${testPort}`
+      }
+    });
+    assert.equal(getRes.status, 200);
+    const getBody = await getRes.json() as any;
+    assert.equal(getBody.proposal.id, proposal.id);
+    assert.equal(getBody.proposal.approvalToken, undefined);
+  });
 });

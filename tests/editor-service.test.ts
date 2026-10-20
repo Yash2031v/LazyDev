@@ -340,4 +340,90 @@ describe('Editor Service & Approval State Machine', () => {
       await fs.rm(otherTempDir, { recursive: true, force: true });
     }
   });
+
+  it('blocks concurrent apply attempts on the same proposal', async () => {
+    const proposal = await editorService.createProposal(canonicalRoot, ignoreEngine, {
+      relativePath: 'index.ts',
+      newContent: 'export const greeting = "concurrent";\n'
+    });
+    await editorService.approveProposal(proposal.id, proposal.approvalToken, canonicalRoot);
+
+    const results = await Promise.allSettled([
+      editorService.applyProposal(proposal.id, proposal.approvalToken, canonicalRoot, ignoreEngine),
+      editorService.applyProposal(proposal.id, proposal.approvalToken, canonicalRoot, ignoreEngine)
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.match((rejected[0] as PromiseRejectedResult).reason.message, /being applied|must be in "approved" state/i);
+  });
+
+  it('rejects apply if target file is converted into a symlink prior to application', async () => {
+    await fs.writeFile(path.join(canonicalRoot, 'symtarget.txt'), 'legit\n', 'utf-8');
+    const proposal = await editorService.createProposal(canonicalRoot, ignoreEngine, {
+      relativePath: 'symtarget.txt',
+      newContent: 'modified\n'
+    });
+    await editorService.approveProposal(proposal.id, proposal.approvalToken, canonicalRoot);
+
+    // Turn symtarget.txt into a symlink
+    await fs.unlink(path.join(canonicalRoot, 'symtarget.txt'));
+    try {
+      await fs.symlink(path.join(canonicalRoot, 'index.ts'), path.join(canonicalRoot, 'symtarget.txt'));
+      await assert.rejects(
+        async () => {
+          await editorService.applyProposal(proposal.id, proposal.approvalToken, canonicalRoot, ignoreEngine);
+        },
+        (err: Error) => {
+          assert.match(err.message, /symbolic link/i);
+          return true;
+        }
+      );
+    } catch (e: any) {
+      if (e.code === 'EPERM') return; // Windows unprivileged symlink limitation
+      throw e;
+    }
+  });
+
+  it('rejects apply if target is classified as secret or ignored prior to application', async () => {
+    const proposal = await editorService.createProposal(canonicalRoot, ignoreEngine, {
+      relativePath: 'index.ts',
+      newContent: 'modified\n'
+    });
+    await editorService.approveProposal(proposal.id, proposal.approvalToken, canonicalRoot);
+
+    // Mock ignoreEngine that now classifies index.ts as secret
+    const strictEngine = {
+      isSecret: (p: string) => p === 'index.ts',
+      shouldIgnore: () => ({ ignored: false })
+    } as any;
+
+    await assert.rejects(
+      async () => {
+        await editorService.applyProposal(proposal.id, proposal.approvalToken, canonicalRoot, strictEngine);
+      },
+      (err: Error) => {
+        assert.match(err.message, /protected as a secret credential/i);
+        return true;
+      }
+    );
+  });
+
+  it('creates backup and preserves originally empty (0-byte) files', async () => {
+    await fs.writeFile(path.join(canonicalRoot, 'empty.txt'), '', 'utf-8');
+    const proposal = await editorService.createProposal(canonicalRoot, ignoreEngine, {
+      relativePath: 'empty.txt',
+      newContent: 'new content\n'
+    });
+    await editorService.approveProposal(proposal.id, proposal.approvalToken, canonicalRoot);
+
+    const result = await editorService.applyProposal(proposal.id, proposal.approvalToken, canonicalRoot, ignoreEngine);
+    assert.equal(result.success, true);
+    assert.ok(result.backupPath);
+    const backupContent = await fs.readFile(result.backupPath, 'utf-8');
+    assert.equal(backupContent, '');
+  });
 });

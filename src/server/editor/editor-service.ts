@@ -42,6 +42,14 @@ function sha256(content: string): string {
   return crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
 }
 
+function safeTokenCompare(provided: string, expected: string): boolean {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  const bufA = Buffer.from(provided, 'utf-8');
+  const bufB = Buffer.from(expected, 'utf-8');
+  if (bufA.length === 0 || bufB.length === 0 || bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 export interface EditorServiceOptions {
   readonly maxFileSizeBytes?: number;
   readonly defaultTtlMs?: number;
@@ -49,6 +57,7 @@ export interface EditorServiceOptions {
 
 export class EditorService {
   private readonly proposals = new Map<string, FileEditProposal>();
+  private readonly activeApplying = new Set<string>();
   private readonly maxFileSizeBytes: number;
   private readonly defaultTtlMs: number;
 
@@ -251,6 +260,10 @@ export class EditorService {
     approvalToken: string,
     currentProjectRoot: string
   ): Promise<FileEditProposal> {
+    if (this.activeApplying.has(id)) {
+      throw new ProposalError(`Proposal "${id}" is currently being applied.`);
+    }
+
     const proposal = await this.getProposal(id, currentProjectRoot);
 
     if (proposal.status === 'conflict') {
@@ -263,7 +276,7 @@ export class EditorService {
       throw new ProposalError(`Only proposals awaiting approval can be approved (current state: "${proposal.status}").`);
     }
 
-    if (!approvalToken || approvalToken !== proposal.approvalToken) {
+    if (!safeTokenCompare(approvalToken, proposal.approvalToken)) {
       throw new ProposalError('Invalid or unauthorized approval token.');
     }
 
@@ -281,6 +294,10 @@ export class EditorService {
     reason: string | undefined,
     currentProjectRoot: string
   ): Promise<FileEditProposal> {
+    if (this.activeApplying.has(id)) {
+      throw new ProposalError(`Cannot reject proposal "${id}" while it is being applied.`);
+    }
+
     const proposal = await this.getProposal(id, currentProjectRoot);
 
     if (proposal.status === 'applied') {
@@ -296,102 +313,157 @@ export class EditorService {
 
   /**
    * Applies an approved proposal to disk using atomic replacement and backup creation.
+   * Enforces revalidation of boundary, ignore rules, symlinks, file type, size, and file hash.
    */
   async applyProposal(
     id: string,
     approvalToken: string,
-    currentProjectRoot: string
+    currentProjectRoot: string,
+    ignoreEngine?: IgnoreEngine
   ): Promise<ProposalApplyResult> {
-    const proposal = await this.getProposal(id, currentProjectRoot);
-
-    if (proposal.status === 'conflict') {
-      throw new ProposalConflictError(proposal.statusReason || 'File has been modified on disk.');
-    }
-    if (proposal.status === 'expired') {
-      throw new ProposalError('Proposal has expired.');
-    }
-    if (proposal.status !== 'approved') {
-      throw new ProposalError(`Proposal must be in "approved" state to be applied (current state: "${proposal.status}").`);
+    if (this.activeApplying.has(id)) {
+      throw new ProposalError(`Proposal "${id}" is already currently being applied.`);
     }
 
-    if (!approvalToken || approvalToken !== proposal.approvalToken) {
-      throw new ProposalError('Invalid or unauthorized approval token.');
-    }
-
-    const targetPath = path.resolve(proposal.projectRoot, proposal.relativePath);
-    const targetDir = path.dirname(targetPath);
-
-    // Re-verify that target on disk has not changed since approval
-    if (proposal.originalHash) {
-      let currentContent: string;
-      try {
-        currentContent = await fs.readFile(targetPath, 'utf-8');
-      } catch (err: unknown) {
-        proposal.status = 'conflict';
-        proposal.statusReason = 'Target file is no longer readable on disk.';
-        throw new ProposalConflictError(proposal.statusReason);
-      }
-
-      if (sha256(currentContent) !== proposal.originalHash) {
-        proposal.status = 'conflict';
-        proposal.statusReason = 'Target file was modified on disk prior to application.';
-        throw new ProposalConflictError(proposal.statusReason);
-      }
-    }
-
-    // 1. Ensure target directory exists
-    await fs.mkdir(targetDir, { recursive: true });
-
-    // 2. Create backup if file existed
-    const backupPath = path.join(targetDir, `.lazydev-backup-${id}.bak`);
-    if (proposal.originalContent) {
-      await fs.writeFile(backupPath, proposal.originalContent, { encoding: 'utf-8', mode: 0o600 });
-      proposal.backupPath = backupPath;
-    }
-
-    // 3. Write proposed content to atomic temporary file in same folder
-    const tmpPath = path.join(targetDir, `.lazydev-tmp-${id}.tmp`);
-    let tmpHandle: fs.FileHandle | null = null;
+    this.activeApplying.add(id);
 
     try {
-      tmpHandle = await fs.open(tmpPath, 'w', 0o600);
-      await tmpHandle.writeFile(proposal.proposedContent, 'utf-8');
-      await tmpHandle.sync(); // Force write to physical storage
-      await tmpHandle.close();
-      tmpHandle = null;
+      const proposal = await this.getProposal(id, currentProjectRoot);
 
-      // 4. Atomic rename replacement
-      await fs.rename(tmpPath, targetPath);
-    } catch (err: unknown) {
-      // Clean up tmp file
-      if (tmpHandle) {
-        await tmpHandle.close().catch(() => {});
+      if (proposal.status === 'conflict') {
+        throw new ProposalConflictError(proposal.statusReason || 'File has been modified on disk.');
       }
-      await fs.unlink(tmpPath).catch(() => {});
-
-      // Rollback from backup if target was modified
-      if (proposal.originalContent && (await fs.stat(backupPath).catch(() => null))) {
-        await fs.copyFile(backupPath, targetPath).catch(() => {});
+      if (proposal.status === 'expired') {
+        throw new ProposalError('Proposal has expired.');
+      }
+      if (proposal.status !== 'approved') {
+        throw new ProposalError(`Proposal must be in "approved" state to be applied (current state: "${proposal.status}").`);
       }
 
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new ProposalError(`Failed to apply changes atomically: ${msg}`);
+      if (!safeTokenCompare(approvalToken, proposal.approvalToken)) {
+        throw new ProposalError('Invalid or unauthorized approval token.');
+      }
+
+      // 1. Re-validate safe path within active project root
+      const { fullPath: targetPath, normalizedRelative } = await resolveSafeRelativePath(
+        currentProjectRoot,
+        proposal.relativePath,
+        false
+      );
+      const targetDir = path.dirname(targetPath);
+
+      // 2. Re-validate ignore engine and secret protections
+      if (ignoreEngine) {
+        if (ignoreEngine.isSecret(normalizedRelative)) {
+          throw new ProposalError(`Access denied: "${normalizedRelative}" is protected as a secret credential.`);
+        }
+        const ignoreCheck = ignoreEngine.shouldIgnore(normalizedRelative, false);
+        if (ignoreCheck.ignored) {
+          throw new ProposalError(`Access denied: "${normalizedRelative}" is an excluded path.`);
+        }
+      }
+
+      // 3. Re-validate binary file restriction
+      if (isBinaryExtension(normalizedRelative)) {
+        throw new ProposalError(`File "${normalizedRelative}" has a binary extension and cannot be edited as text.`);
+      }
+
+      // 4. Re-validate content size limit
+      const proposedBuffer = Buffer.from(proposal.proposedContent, 'utf-8');
+      if (proposedBuffer.length > this.maxFileSizeBytes) {
+        throw new ProposalError(`Proposed content (${proposedBuffer.length} bytes) exceeds limit of ${this.maxFileSizeBytes} bytes.`);
+      }
+
+      // 5. Re-validate symlink safety on target file
+      try {
+        const lstat = await fs.lstat(targetPath);
+        if (lstat.isSymbolicLink()) {
+          throw new ProposalError(`Target "${normalizedRelative}" is a symbolic link. Modifying symlinks is forbidden.`);
+        }
+        if (!lstat.isFile()) {
+          throw new ProposalError(`Target "${normalizedRelative}" exists and is not a regular file.`);
+        }
+      } catch (err: unknown) {
+        if (err instanceof ProposalError) throw err;
+        // ENOENT is acceptable for new file creation
+      }
+
+      // 6. Re-verify that target on disk has not changed since approval
+      if (proposal.originalHash) {
+        let currentContent: string;
+        try {
+          currentContent = await fs.readFile(targetPath, 'utf-8');
+        } catch {
+          proposal.status = 'conflict';
+          proposal.statusReason = 'Target file is no longer readable on disk.';
+          throw new ProposalConflictError(proposal.statusReason);
+        }
+
+        if (sha256(currentContent) !== proposal.originalHash) {
+          proposal.status = 'conflict';
+          proposal.statusReason = 'Target file was modified on disk prior to application.';
+          throw new ProposalConflictError(proposal.statusReason);
+        }
+      }
+
+      // 7. Ensure target directory exists
+      await fs.mkdir(targetDir, { recursive: true });
+
+      // 8. Create backup if file previously existed
+      const backupPath = path.join(targetDir, `.lazydev-backup-${id}.bak`);
+      if (proposal.originalHash) {
+        await fs.writeFile(backupPath, proposal.originalContent, { encoding: 'utf-8', mode: 0o600 });
+        proposal.backupPath = backupPath;
+      }
+
+      // 9. Write proposed content to atomic temporary file in same folder
+      const tmpPath = path.join(targetDir, `.lazydev-tmp-${id}.tmp`);
+      let tmpHandle: fs.FileHandle | null = null;
+
+      try {
+        tmpHandle = await fs.open(tmpPath, 'w', 0o600);
+        await tmpHandle.writeFile(proposal.proposedContent, 'utf-8');
+        await tmpHandle.sync(); // Force write to physical storage
+        await tmpHandle.close();
+        tmpHandle = null;
+
+        // 10. Atomic rename replacement
+        await fs.rename(tmpPath, targetPath);
+      } catch (err: unknown) {
+        // Clean up tmp file
+        if (tmpHandle) {
+          await tmpHandle.close().catch(() => {});
+        }
+        await fs.unlink(tmpPath).catch(() => {});
+
+        // Rollback from backup if target was modified
+        if (proposal.originalHash && (await fs.stat(backupPath).catch(() => null))) {
+          await fs.copyFile(backupPath, targetPath).catch(() => {});
+        } else if (!proposal.originalHash) {
+          await fs.unlink(targetPath).catch(() => {});
+        }
+
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ProposalError(`Failed to apply changes atomically: ${msg}`);
+      }
+
+      // Mark applied and single-use token invalidated
+      proposal.status = 'applied';
+      proposal.resolvedAt = new Date().toISOString();
+
+      const writtenBytes = Buffer.byteLength(proposal.proposedContent, 'utf-8');
+
+      return {
+        success: true,
+        status: 'applied',
+        proposalId: proposal.id,
+        relativePath: proposal.relativePath,
+        bytesWritten: writtenBytes,
+        backupPath: backupPath || '',
+        appliedAt: proposal.resolvedAt
+      };
+    } finally {
+      this.activeApplying.delete(id);
     }
-
-    // Mark applied
-    proposal.status = 'applied';
-    proposal.resolvedAt = new Date().toISOString();
-
-    const writtenBytes = Buffer.byteLength(proposal.proposedContent, 'utf-8');
-
-    return {
-      success: true,
-      status: 'applied',
-      proposalId: proposal.id,
-      relativePath: proposal.relativePath,
-      bytesWritten: writtenBytes,
-      backupPath: backupPath || '',
-      appliedAt: proposal.resolvedAt
-    };
   }
 }
