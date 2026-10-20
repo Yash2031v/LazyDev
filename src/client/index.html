@@ -15,7 +15,7 @@
         <div class="logo-mark">LD</div>
         <div class="brand-text">
           <span class="brand-title">LazyDev</span>
-          <span class="brand-sub">Milestone 1 · Foundation</span>
+          <span class="brand-sub">Milestone 2 · Safe Codebase Indexer</span>
         </div>
       </div>
 
@@ -30,10 +30,87 @@
 
     <!-- Main Workspace Container -->
     <main class="main-container">
-      <!-- Left Column: Status & Runtime Overview -->
+      <!-- Left Column: Project Management & Read-Only Explorer -->
+      <section class="panel project-panel" aria-labelledby="project-panel-title">
+        <div class="panel-header">
+          <h2 id="project-panel-title">Project Workspace</h2>
+          <span class="badge badge-accent" id="project-status-badge">No Project Loaded</span>
+        </div>
+
+        <!-- Project Root Selector -->
+        <div class="project-selector">
+          <label for="project-path-input" class="input-label">Local Project Root Path:</label>
+          <div class="input-group">
+            <input
+              type="text"
+              id="project-path-input"
+              class="text-input"
+              placeholder="e.g. D:\Project main\LazyDev"
+              spellcheck="false"
+            >
+            <button id="scan-project-btn" class="btn btn-primary">Index Project</button>
+          </div>
+          <p class="input-hint">Canonical path required. Drives roots and user home folders are blocked for safety.</p>
+        </div>
+
+        <!-- Project Summary Cards -->
+        <div class="card-grid" id="project-summary-grid">
+          <div class="card">
+            <span class="card-title">Indexed Files</span>
+            <div class="card-value" id="card-total-files">0</div>
+            <p class="card-desc" id="card-total-size">0 KB</p>
+          </div>
+
+          <div class="card">
+            <span class="card-title">Excluded Items</span>
+            <div class="card-value" id="card-skipped-count">0</div>
+            <p class="card-desc">Secrets, dependencies & binaries</p>
+          </div>
+
+          <div class="card">
+            <span class="card-title">Detected Types</span>
+            <div class="card-value" id="card-file-types">—</div>
+            <p class="card-desc" id="card-file-types-desc">No types detected</p>
+          </div>
+
+          <div class="card">
+            <span class="card-title">Security Mode</span>
+            <div class="card-value text-emerald">Read-Only</div>
+            <p class="card-desc">Zero file write or command APIs active</p>
+          </div>
+        </div>
+
+        <!-- Read-Only Search Box -->
+        <div class="search-box">
+          <label for="search-input" class="input-label">Search Permitted Files:</label>
+          <div class="input-group">
+            <input
+              type="text"
+              id="search-input"
+              class="text-input"
+              placeholder="Search code or text..."
+            >
+            <button id="search-btn" class="btn btn-secondary">Search</button>
+          </div>
+          <div class="search-results" id="search-results" style="display: none;">
+            <div class="search-header" id="search-results-header">Matches</div>
+            <ul class="search-list" id="search-list"></ul>
+          </div>
+        </div>
+
+        <!-- File List / Browser -->
+        <div class="file-list-section">
+          <div class="section-title">Permitted Files:</div>
+          <div class="file-list-container" id="file-list-container">
+            <p class="empty-state">No project loaded. Enter a path above to index files.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: System Status & Roadmap -->
       <section class="panel status-panel" aria-labelledby="status-panel-title">
         <div class="panel-header">
-          <h2 id="status-panel-title">System Status</h2>
+          <h2 id="status-panel-title">System & Security</h2>
           <button id="refresh-btn" class="btn btn-secondary" title="Check connection status">Refresh Status</button>
         </div>
 
@@ -45,99 +122,54 @@
           </div>
 
           <div class="card">
-            <span class="card-title">Available Models</span>
-            <div class="card-value" id="card-model-count">0 models</div>
-            <p class="card-desc" id="card-model-list">No local open-weight models loaded.</p>
-          </div>
-
-          <div class="card">
             <span class="card-title">Network Isolation</span>
             <div class="card-value text-emerald">100% Local-First</div>
-            <p class="card-desc">Loopback only. No cloud telemetry or remote AI APIs.</p>
-          </div>
-
-          <div class="card">
-            <span class="card-title">Host Security</span>
-            <div class="card-value" id="card-host-security">Verified</div>
-            <p class="card-desc">Strict loopback binding, Host header enforcement, and CSP active.</p>
+            <p class="card-desc">Loopback only. No cloud AI APIs or telemetry.</p>
           </div>
         </div>
 
-        <!-- Setup Instructions Card (Displays when Ollama is offline) -->
-        <div class="info-card" id="ollama-setup-guide">
-          <h3>Ollama Setup Guide (Local-First Theme)</h3>
-          <p>LazyDev runs completely offline using local open-weight models managed by Ollama. When Ollama is not running, core developer tools and file analysis remain accessible.</p>
-          <div class="steps-list">
-            <div class="step-item">
-              <span class="step-num">1</span>
-              <div>
-                <strong>Install Ollama</strong>
-                <p>Download from official source: <code>https://ollama.com/download/windows</code></p>
+        <!-- Roadmap -->
+        <div class="roadmap-section">
+          <div class="section-title">Architecture Roadmap</div>
+          <div class="roadmap-list">
+            <div class="roadmap-item completed">
+              <div class="roadmap-marker">✓</div>
+              <div class="roadmap-content">
+                <strong>Milestone 0: Inspection & Architecture</strong>
+                <p>Audited workspace, Node 24 runtime, zero-dependency server design.</p>
               </div>
             </div>
-            <div class="step-item">
-              <span class="step-num">2</span>
-              <div>
-                <strong>Pull a Recommended Model</strong>
-                <p>Open PowerShell and run: <code>ollama pull qwen2.5-coder:7b</code> or <code>ollama pull llama3.2:3b</code></p>
+
+            <div class="roadmap-item completed">
+              <div class="roadmap-marker">✓</div>
+              <div class="roadmap-content">
+                <strong>Milestone 1: Professional Foundation</strong>
+                <p>Loopback HTTP server, Ollama health probe, security headers, Host validation.</p>
               </div>
             </div>
-            <div class="step-item">
-              <span class="step-num">3</span>
-              <div>
-                <strong>Verify Service</strong>
-                <p>Ensure Ollama is running in background. Click <strong>Refresh Status</strong> above to auto-detect.</p>
+
+            <div class="roadmap-item active">
+              <div class="roadmap-marker">2</div>
+              <div class="roadmap-content">
+                <strong>Milestone 2: Safe Codebase Indexer (Current)</strong>
+                <p>Read-only file traversal, secret/binary filtering, bounded search, and anti-traversal.</p>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <!-- Right Column: Architecture & Next Steps -->
-      <section class="panel plan-panel" aria-labelledby="plan-panel-title">
-        <div class="panel-header">
-          <h2 id="plan-panel-title">Architecture Roadmap</h2>
-          <span class="badge badge-accent">Foundation Ready</span>
-        </div>
-
-        <div class="roadmap-list">
-          <div class="roadmap-item completed">
-            <div class="roadmap-marker">✓</div>
-            <div class="roadmap-content">
-              <strong>Milestone 0: Repository Inspection & Architecture</strong>
-              <p>Audited workspace, determined Node 24 runtime, zero-dependency server design.</p>
+            <div class="roadmap-item future">
+              <div class="roadmap-marker">3</div>
+              <div class="roadmap-content">
+                <strong>Milestone 3: Permission-Controlled Tools & Diff Engine</strong>
+                <p>Unified visual diffs, staged file proposals, and explicit user approval.</p>
+              </div>
             </div>
-          </div>
 
-          <div class="roadmap-item active">
-            <div class="roadmap-marker">1</div>
-            <div class="roadmap-content">
-              <strong>Milestone 1: Professional Foundation (Current)</strong>
-              <p>Loopback-only HTTP server, Ollama health probe, security headers, Host validation, and test harness.</p>
-            </div>
-          </div>
-
-          <div class="roadmap-item future">
-            <div class="roadmap-marker">2</div>
-            <div class="roadmap-content">
-              <strong>Milestone 2: Safe Codebase Indexing</strong>
-              <p>Read-only file traversal, secret and binary filtering, size limits, and safe exploration tools.</p>
-            </div>
-          </div>
-
-          <div class="roadmap-item future">
-            <div class="roadmap-marker">3</div>
-            <div class="roadmap-content">
-              <strong>Milestone 3: Permission-Controlled Tool System & Diff Engine</strong>
-              <p>Unified visual diffs, staged file proposals, and explicit user approval before execution.</p>
-            </div>
-          </div>
-
-          <div class="roadmap-item future">
-            <div class="roadmap-marker">4</div>
-            <div class="roadmap-content">
-              <strong>Milestone 4: Open-Weight Model Orchestration</strong>
-              <p>Streaming inference, task decomposition, test generation, and documentation drafting.</p>
+            <div class="roadmap-item future">
+              <div class="roadmap-marker">4</div>
+              <div class="roadmap-content">
+                <strong>Milestone 4: Open-Weight Model Orchestration</strong>
+                <p>Streaming inference, task decomposition, test generation, and documentation.</p>
+              </div>
             </div>
           </div>
         </div>
@@ -152,16 +184,27 @@
             <span class="telemetry-val" id="runtime-val">Node.js 24 (Win32)</span>
           </div>
           <div class="telemetry-item">
-            <span class="telemetry-label">Latency</span>
-            <span class="telemetry-val" id="latency-val">—</span>
+            <span class="telemetry-label">Active Project</span>
+            <span class="telemetry-val" id="active-project-val">None</span>
           </div>
         </div>
       </section>
     </main>
 
+    <!-- File Viewer Modal (Read-Only) -->
+    <div class="modal-backdrop" id="file-modal" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-file-title">file.txt</span>
+          <button id="modal-close-btn" class="btn btn-secondary">Close</button>
+        </div>
+        <pre class="modal-content" id="modal-file-content"></pre>
+      </div>
+    </div>
+
     <!-- Footer -->
     <footer class="bottom-bar">
-      <span>LazyDev · Slow and Steady Open-Source AI · 100% Local & Private</span>
+      <span>LazyDev · Slow and Steady Open-Source AI · Read-Only Inspection Layer</span>
       <span id="footer-last-sync">Last ping: —</span>
     </footer>
   </div>

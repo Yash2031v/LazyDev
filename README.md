@@ -14,32 +14,41 @@
 
 ---
 
-## 2. Current Status — Milestone 1: Professional Foundation
+## 2. Current Status — Milestone 2: Safe Codebase Indexer & Read-Only Tools
 
-This repository currently implements **Milestone 1**. The foundational runtime and security scaffolding are established:
+This repository implements **Milestone 2**. LazyDev can safely index, summarize, and search developer repositories in a **strictly read-only mode** with deep anti-traversal protection and secret-exclusion guarantees.
 
-### Implemented Features
-- **Strict Loopback Server**: An HTTP server built on Node.js standard libraries, binding exclusively to `127.0.0.1` (never `0.0.0.0`).
+### Implemented Features (Milestone 1 + Milestone 2)
+- **Strict Loopback Server**: An HTTP server built entirely on Node.js standard libraries, binding exclusively to `127.0.0.1` (never `0.0.0.0`).
 - **Validated Environment Configuration**: Support for `PORT` (default: `4173`), `HOST` (default: `127.0.0.1`), `OLLAMA_HOST` (default: `http://127.0.0.1:11434`), and `OLLAMA_TIMEOUT_MS` (default: `2000`).
-- **Defensive Host Header Validation**: Enforces trusted loopback hosts and rejects external or spoofed host headers with `400 Bad Request`.
-- **Security Headers**: Standard defense-in-depth headers applied on all responses (`Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy`).
-- **Resilient Ollama Health Probe**:
-  - Probes `GET /api/tags` with configurable timeout.
-  - Gracefully handles offline status, connection timeouts, refused connections, and malformed responses without crashing.
-  - Reports status at `GET /api/status`.
-- **Health Check Endpoint**: `GET /api/health` providing uptime, status, and version.
-- **Developer Shell Interface**: Desktop-oriented web interface served at `http://127.0.0.1:4173/`, featuring:
-  - High-contrast graphite and restrained emerald aesthetic.
+- **Defensive Host Header Validation**: Rejects unexpected or spoofed host headers with `400 Bad Request`.
+- **Security Headers**: Content Security Policy (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
+- **Resilient Ollama Health Probe**: Probes `GET /api/tags` with configurable timeout; handles offline/timeout gracefully without crashing.
+- **Safe Codebase Indexer**:
+  - Explicit user-selected project root with full canonicalization (`fs.realpath`).
+  - Strict boundary defense: rejects drive roots (`C:\`, `/`), user home directories (`C:\Users\Username`), and system paths.
+  - Defense against directory traversal (`..`), absolute paths, null bytes (`\0`), and Windows Alternate Data Streams (`:`).
+  - Physical symlink escape prevention: symlinks pointing outside the project root are safely rejected.
+  - Automatic exclusion of `.git`, `node_modules`, `dist`, `build`, `coverage`, `.next`, `.cache`, `.turbo`, `vendor`, `.venv`.
+  - Automatic exclusion of secrets: `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `credentials.json`, `token.json`, `secrets.*`.
+  - Automatic exclusion of binary files via extension matching and first-512-byte null-character heuristic.
+  - Bounded scan limits: `maxFiles` (2,000), `maxDepth` (15 levels), `maxFileSizeBytes` (512 KB).
+  - Lightweight, dependency-free `.gitignore` parser supporting comments (`#`), trailing directory slashes (`dir/`), wildcards (`*`, `**`), and negation (`!`).
+- **Read-Only Developer Tools**:
+  - `GET /api/project/files`: List indexed text files and skipped files.
+  - `GET /api/project/summary`: File count, total size, file types breakdown, top directories.
+  - `GET /api/project/file?path=...`: Read permitted text file with secret and size guards.
+  - `POST /api/project/search`: Bounded text search across permitted files with line numbers and line snippets.
+- **Desktop Developer Interface**:
+  - High-contrast graphite/emerald aesthetic.
   - Live local-AI connectivity status pill.
-  - Model catalog display and offline setup guidance.
-  - Zero external CDN scripts, remote fonts, or telemetry.
-- **Graceful Lifecycle Management**: Clean server termination on `SIGINT` and `SIGTERM`.
-- **Automated Test Suite**: 23 unit and integration tests using Node's built-in test runner (`node:test`).
+  - Project indexing input, file browser, search bar, and read-only file viewer modal.
+  - Zero external CDN scripts, remote fonts, or analytics.
 
 ### Current Limitations
-- **Model Inference Not Yet Implemented**: Milestone 1 establishes the connection probe and UI foundation. Active LLM prompt orchestration, streaming completion, and agent loops will be implemented in Milestone 4.
-- **Codebase Indexing & File Tools Pending**: Safe read-only project traversal will be added in Milestone 2.
-- **Tool Execution & Diff Engine Pending**: Mutation tools and permission gates will be added in Milestone 3.
+- **Read-Only by Design**: Milestone 2 does not write, rename, delete, or modify any files on disk.
+- **Model Inference Not Yet Implemented**: Milestone 4 will integrate open-weight LLMs (e.g. Qwen 2.5 Coder, Llama 3.2) for task decomposition and error explanations.
+- **Diff Preview & Action Gate Pending**: Milestone 3 will introduce permission-controlled file edit proposals and unified diff previews.
 
 ---
 
@@ -48,11 +57,9 @@ This repository currently implements **Milestone 1**. The foundational runtime a
 LazyDev adheres strictly to zero-leakage principles:
 
 1. **No External Network Calls**: The server only listens on loopback (`127.0.0.1`) and only talks to the local Ollama daemon (`http://127.0.0.1:11434`).
-2. **No Third-Party Telemetry**: There are zero tracking pixels, analytics scripts, remote fonts, or cloud SDKs.
-3. **No Unsanitized Error Leaks**: API error responses never expose stack traces, directory trees, or system environment variables.
-4. **Planned Two-Phase Action Gate**:
-   - *Phase 1 (Read/Analyze)*: File inspection is read-only by default.
-   - *Phase 2 (Modify/Run)*: Any proposed edit or shell command generates an in-memory diff preview that halts for human approval before execution.
+2. **Untrusted Data Policy**: Repository files, comments, and README instructions are treated as untrusted text data. The system never executes code or prompts discovered in scanned projects.
+3. **Secret Protection**: Excluded secret files (`.env`, private keys, tokens) are never read or returned over API endpoints. Attempting to access an excluded secret path yields `403 Forbidden`.
+4. **No Third-Party Telemetry**: There are zero tracking pixels, analytics scripts, remote fonts, or cloud SDKs.
 
 ---
 
@@ -62,11 +69,9 @@ LazyDev adheres strictly to zero-leakage principles:
 - **Node.js**: `v20.0.0` or higher (tested on `v24.13.0` x64)
 - **npm**: `v10.0.0` or higher (tested on `11.6.2`)
 - **Git**: Installed and available in PATH
-- **Ollama (Optional for Milestone 1)**: Can be installed from [https://ollama.com/download/windows](https://ollama.com/download/windows) to test live open-weight model detection.
+- **Ollama (Optional)**: [https://ollama.com/download/windows](https://ollama.com/download/windows)
 
 ### Installation
-
-Clone the repository and install the minimal developer dependencies:
 
 ```powershell
 # Navigate to project directory
@@ -77,8 +82,6 @@ npm install
 ```
 
 ### Running the Development Server
-
-Start the local server with live TypeScript compilation:
 
 ```powershell
 npm run dev
@@ -101,7 +104,7 @@ Run the built-in test suite:
 npm test
 ```
 
-All 23 tests run offline without requiring Ollama or internet access.
+All 62 tests run completely offline without requiring Ollama or internet access.
 
 ### Type Checking & Production Build
 
@@ -118,16 +121,83 @@ npm start
 
 ---
 
-## 5. Environment Variables
+## 5. API Reference (Read-Only Codebase Endpoints)
 
-Create a `.env` file (refer to `.env.example`) to customize configuration:
+### `POST /api/project/root`
+Configures and scans a local project root.
+```json
+// Request
+{
+  "path": "D:\\Project main\\LazyDev"
+}
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `PORT` | `4173` | Port for the local web server (0-65535) |
-| `HOST` | `127.0.0.1` | Loopback host (`127.0.0.1` or `localhost` only) |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | URL to local Ollama API |
-| `OLLAMA_TIMEOUT_MS` | `2000` | Health check probe timeout in milliseconds |
+// Response
+{
+  "message": "Project root set and scanned successfully.",
+  "root": "D:\\Project main\\LazyDev",
+  "scan": {
+    "totalFilesScanned": 24,
+    "limitReached": false,
+    "warnings": []
+  }
+}
+```
+
+### `GET /api/project/summary`
+Returns high-level structure metadata.
+```json
+{
+  "rootPath": "D:\\Project main\\LazyDev",
+  "totalFiles": 24,
+  "totalSizeBytes": 84210,
+  "fileTypes": {
+    ".ts": 14,
+    ".json": 4,
+    ".css": 1,
+    ".html": 1,
+    ".md": 1
+  },
+  "topDirectories": ["src", "tests"],
+  "skippedCount": 3,
+  "warnings": []
+}
+```
+
+### `GET /api/project/file?path=src/server/index.ts`
+Retrieves permitted text file content.
+```json
+{
+  "relativePath": "src/server/index.ts",
+  "content": "...",
+  "sizeBytes": 2889,
+  "modifiedTime": "2026-10-20T12:00:00.000Z"
+}
+```
+
+### `POST /api/project/search`
+Searches for text across permitted project files.
+```json
+// Request
+{
+  "query": "LazyDev",
+  "caseSensitive": false,
+  "maxResults": 50
+}
+
+// Response
+{
+  "query": "LazyDev",
+  "totalMatches": 12,
+  "limitReached": false,
+  "matches": [
+    {
+      "relativePath": "src/server/index.ts",
+      "lineNumber": 57,
+      "lineContent": "console.log(`[LazyDev] Local server listening at http://${config.host}:${config.port}`);"
+    }
+  ]
+}
+```
 
 ---
 
@@ -136,8 +206,8 @@ Create a `.env` file (refer to `.env.example`) to customize configuration:
 | Milestone | Focus | Status |
 | :---: | :--- | :---: |
 | **0** | Repository Inspection & Architecture Plan | Complete |
-| **1** | Professional Foundation & Local Scaffolding | **Complete (Current)** |
-| **2** | Safe Codebase Indexing & Read-Only Tools | Planned |
+| **1** | Professional Foundation & Local Scaffolding | Complete |
+| **2** | Safe Codebase Indexing & Read-Only Tools | **Complete (Current)** |
 | **3** | Permission-Controlled Tool System & Diff Engine | Planned |
 | **4** | Open-Weight Model Orchestration & Prompts | Planned |
 | **5** | Desktop UI & User Approval Workflows | Planned |

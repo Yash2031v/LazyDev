@@ -8,20 +8,28 @@ import { loadConfig, type AppConfig } from './config.js';
 import { OllamaClient } from './ollama.js';
 import { createRequestHandler } from './app.js';
 
+import { ProjectService } from './project/project-service.js';
+
 export interface ServerInstance {
   readonly server: http.Server;
   readonly config: AppConfig;
+  readonly projectService: ProjectService;
   readonly close: () => Promise<void>;
 }
 
-export function startServer(customConfig?: AppConfig, clientDirOverride?: string): Promise<ServerInstance> {
+export function startServer(
+  customConfig?: AppConfig,
+  clientDirOverride?: string,
+  customProjectService?: ProjectService
+): Promise<ServerInstance> {
   const config = customConfig ?? loadConfig();
   const ollamaClient = new OllamaClient({
     endpoint: config.ollamaHost,
     timeoutMs: config.ollamaTimeoutMs
   });
+  const projectService = customProjectService ?? new ProjectService();
 
-  const requestHandler = createRequestHandler(config, ollamaClient, clientDirOverride);
+  const requestHandler = createRequestHandler(config, ollamaClient, clientDirOverride, projectService);
   const server = http.createServer(requestHandler);
 
   return new Promise((resolve, reject) => {
@@ -40,7 +48,7 @@ export function startServer(customConfig?: AppConfig, clientDirOverride?: string
         });
       };
 
-      resolve({ server, config, close });
+      resolve({ server, config, projectService, close });
     });
   });
 }

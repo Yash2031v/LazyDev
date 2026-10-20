@@ -28,8 +28,40 @@ async function resolveClientDir(): Promise<string> {
   }
 }
 
-export function createRequestHandler(config: AppConfig, ollamaClient: OllamaClient, clientDirOverride?: string) {
+import { ProjectService, ProjectAccessError } from './project/project-service.js';
+import { PathValidationError, SymlinkEscapeError } from './project/path-validator.js';
+
+async function parseJsonBody<T>(req: IncomingMessage, maxBytes = 64 * 1024): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        reject(new Error('Payload too large'));
+        return;
+      }
+      raw += chunk.toString('utf-8');
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(raw || '{}') as T);
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+export function createRequestHandler(
+  config: AppConfig,
+  ollamaClient: OllamaClient,
+  clientDirOverride?: string,
+  projectServiceOverride?: ProjectService
+) {
   const startTime = Date.now();
+  const projectService = projectServiceOverride ?? new ProjectService();
 
   return async function requestHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
@@ -44,7 +76,7 @@ export function createRequestHandler(config: AppConfig, ollamaClient: OllamaClie
       const parsedUrl = new URL(rawUrl, `http://${req.headers.host || '127.0.0.1'}`);
       const pathname = parsedUrl.pathname;
 
-      // 2. API Routes
+      // 2. System API Routes
       if (pathname === '/api/health') {
         if (method !== 'GET') {
           res.setHeader('Allow', 'GET');
@@ -74,7 +106,7 @@ export function createRequestHandler(config: AppConfig, ollamaClient: OllamaClie
           app: {
             name: 'LazyDev',
             version: '0.1.0',
-            milestone: 'Milestone 1: Professional Foundation',
+            milestone: 'Milestone 2: Safe Codebase Indexer & Read-Only Tools',
             environment: 'local'
           },
           runtime: {
@@ -82,9 +114,155 @@ export function createRequestHandler(config: AppConfig, ollamaClient: OllamaClie
             platform: process.platform,
             arch: process.arch
           },
+          project: {
+            hasActiveProject: projectService.hasActiveProject(),
+            root: projectService.getProjectRoot()
+          },
           ollama: ollamaStatus
         });
         return;
+      }
+
+      // 3. Project API Routes (Milestone 2)
+      if (pathname === '/api/project/root') {
+        if (method === 'GET') {
+          sendJson(res, 200, {
+            root: projectService.getProjectRoot(),
+            hasActiveProject: projectService.hasActiveProject()
+          });
+          return;
+        }
+
+        if (method === 'POST') {
+          try {
+            const body = await parseJsonBody<{ path?: string }>(req);
+            if (!body.path || typeof body.path !== 'string') {
+              sendError(res, 400, 'Missing or invalid "path" string in request body.');
+              return;
+            }
+
+            const scanResult = await projectService.setProjectRoot(body.path);
+            sendJson(res, 200, {
+              message: 'Project root set and scanned successfully.',
+              root: scanResult.canonicalRootPath,
+              scan: scanResult
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof PathValidationError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
+        }
+
+        res.setHeader('Allow', 'GET, POST');
+        sendError(res, 405, 'Method Not Allowed');
+        return;
+      }
+
+      if (pathname === '/api/project/files') {
+        if (method !== 'GET') {
+          res.setHeader('Allow', 'GET');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const scan = await projectService.getScanResult();
+          sendJson(res, 200, scan);
+          return;
+        } catch (err: unknown) {
+          if (err instanceof ProjectAccessError) {
+            sendError(res, 400, err.message);
+            return;
+          }
+          throw err;
+        }
+      }
+
+      if (pathname === '/api/project/summary') {
+        if (method !== 'GET') {
+          res.setHeader('Allow', 'GET');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const summary = await projectService.getSummary();
+          sendJson(res, 200, summary);
+          return;
+        } catch (err: unknown) {
+          if (err instanceof ProjectAccessError) {
+            sendError(res, 400, err.message);
+            return;
+          }
+          throw err;
+        }
+      }
+
+      if (pathname === '/api/project/file') {
+        if (method !== 'GET') {
+          res.setHeader('Allow', 'GET');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        const relativePath = parsedUrl.searchParams.get('path');
+        if (!relativePath) {
+          sendError(res, 400, 'Missing "path" query parameter.');
+          return;
+        }
+
+        try {
+          const fileResult = await projectService.readFile(relativePath);
+          sendJson(res, 200, fileResult);
+          return;
+        } catch (err: unknown) {
+          if (err instanceof SymlinkEscapeError || (err instanceof ProjectAccessError && err.message.includes('Access denied'))) {
+            sendError(res, 403, err.message);
+            return;
+          }
+          if (err instanceof PathValidationError || err instanceof ProjectAccessError) {
+            sendError(res, 400, err.message);
+            return;
+          }
+          throw err;
+        }
+      }
+
+      if (pathname === '/api/project/search') {
+        if (method !== 'POST') {
+          res.setHeader('Allow', 'POST');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        try {
+          const body = await parseJsonBody<{ query?: string; caseSensitive?: boolean; maxResults?: number }>(req);
+          if (!body.query || typeof body.query !== 'string') {
+            sendError(res, 400, 'Missing or invalid "query" string in request body.');
+            return;
+          }
+
+          const searchResult = await projectService.searchFiles({
+            query: body.query,
+            caseSensitive: body.caseSensitive,
+            maxResults: body.maxResults
+          });
+
+          sendJson(res, 200, searchResult);
+          return;
+        } catch (err: unknown) {
+          if (err instanceof PathValidationError || err instanceof ProjectAccessError) {
+            sendError(res, 400, err.message);
+            return;
+          }
+          throw err;
+        }
       }
 
       // 3. Static Assets
