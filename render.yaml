@@ -6,8 +6,12 @@ services:
     buildCommand: npm run build
     startCommand: npm start
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
+      - key: NPM_CONFIG_PRODUCTION
+        value: "false"
       - key: LAZYDEV_PUBLIC_DEMO
         value: "true"
       - key: LAZYDEV_AI_MODE

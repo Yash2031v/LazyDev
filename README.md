@@ -305,7 +305,9 @@ LazyDev is pre-configured for one-click deployment as a Web Service on [Render](
    - **Plan**: `Free`
 3. **Configure Environment Variables**:
    Add the following environment variables in the Render dashboard:
+   - `NODE_VERSION`: `22`
    - `NODE_ENV`: `production`
+   - `NPM_CONFIG_PRODUCTION`: `false`
    - `LAZYDEV_PUBLIC_DEMO`: `true`
    - `LAZYDEV_AI_MODE`: `demo`
    - `HOST`: `0.0.0.0`
