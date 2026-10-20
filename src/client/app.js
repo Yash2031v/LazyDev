@@ -39,6 +39,29 @@
   const modalFileContent = document.getElementById('modal-file-content');
   const modalCloseBtn = document.getElementById('modal-close-btn');
 
+  // Milestone 3 Proposal Elements
+  const proposalPathInput = document.getElementById('proposal-path-input');
+  const proposalContentInput = document.getElementById('proposal-content-input');
+  const createProposalBtn = document.getElementById('create-proposal-btn');
+  const proposalsListContainer = document.getElementById('proposals-list-container');
+
+  const proposalModal = document.getElementById('proposal-modal');
+  const proposalModalCloseBtn = document.getElementById('proposal-modal-close-btn');
+  const proposalModalFileTitle = document.getElementById('proposal-modal-file-title');
+  const proposalModalStatusBadge = document.getElementById('proposal-modal-status-badge');
+  const proposalModalAdds = document.getElementById('proposal-modal-adds');
+  const proposalModalDels = document.getElementById('proposal-modal-dels');
+  const proposalModalIdTag = document.getElementById('proposal-modal-id-tag');
+  const proposalAlertBanner = document.getElementById('proposal-alert-banner');
+  const proposalDiffCode = document.getElementById('proposal-diff-code');
+  const proposalSafetyText = document.getElementById('proposal-safety-text');
+  const proposalRejectBtn = document.getElementById('proposal-reject-btn');
+  const proposalApproveBtn = document.getElementById('proposal-approve-btn');
+  const proposalApplyBtn = document.getElementById('proposal-apply-btn');
+
+  let currentProposal = null;
+  const proposalTokens = new Map(); // proposalId -> approvalToken
+
   function formatBytes(bytes) {
     if (bytes < 1024) return `${bytes} B`;
     const kb = (bytes / 1024).toFixed(1);
@@ -341,6 +364,316 @@
     return div.innerHTML;
   }
 
+  // Milestone 3: Proposal Management & Diff Logic
+  async function loadProposals() {
+    if (!proposalsListContainer) return;
+    try {
+      const res = await fetch('/api/project/proposals', {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      renderProposalsList(data.proposals || []);
+    } catch {
+      // Nonfatal
+    }
+  }
+
+  function renderProposalsList(proposals) {
+    if (!proposalsListContainer) return;
+    if (proposals.length === 0) {
+      proposalsListContainer.innerHTML = '<p class="empty-state">No proposals created yet.</p>';
+      return;
+    }
+
+    proposalsListContainer.innerHTML = '';
+    for (const p of proposals) {
+      const card = document.createElement('div');
+      card.className = 'proposal-card';
+      const statusClass = `badge-status-${p.status}`;
+      const statusLabel = p.status.replace(/_/g, ' ').toUpperCase();
+
+      card.innerHTML = `
+        <div class="proposal-card-info">
+          <span class="proposal-card-path">${escapeHtml(p.relativePath)}</span>
+          <div class="proposal-card-meta">
+            <span class="diff-stat-add">+${p.additions}</span>
+            <span class="diff-stat-del">-${p.deletions}</span>
+            <span>Created ${new Date(p.createdAt).toLocaleTimeString()}</span>
+            ${p.statusReason ? `<span>• ${escapeHtml(p.statusReason)}</span>` : ''}
+          </div>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span class="badge ${statusClass}">${statusLabel}</span>
+          <button class="btn btn-secondary" data-proposal-id="${p.id}">Inspect Diff</button>
+        </div>
+      `;
+
+      card.querySelector('button').addEventListener('click', () => {
+        openProposalModal(p.id);
+      });
+
+      proposalsListContainer.appendChild(card);
+    }
+  }
+
+  async function createProposalAction() {
+    if (!proposalPathInput || !proposalContentInput) return;
+    const relativePath = proposalPathInput.value.trim();
+    const newContent = proposalContentInput.value;
+
+    if (!relativePath) {
+      alert('Please enter a target relative path.');
+      return;
+    }
+
+    createProposalBtn.disabled = true;
+    createProposalBtn.textContent = 'Generating Diff...';
+
+    try {
+      const res = await fetch('/api/project/proposals', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ relativePath, newContent })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Failed to create proposal.');
+      }
+
+      // Cache token for this proposal session
+      if (data.proposal?.id && data.proposal?.approvalToken) {
+        proposalTokens.set(data.proposal.id, data.proposal.approvalToken);
+      }
+
+      proposalPathInput.value = '';
+      proposalContentInput.value = '';
+      await loadProposals();
+      openProposalModal(data.proposal.id);
+    } catch (err) {
+      alert(`Proposal Error: ${err.message}`);
+    } finally {
+      createProposalBtn.disabled = false;
+      createProposalBtn.textContent = 'Generate Diff Preview';
+    }
+  }
+
+  async function openProposalModal(proposalId) {
+    if (!proposalModal) return;
+    try {
+      const res = await fetch(`/api/project/proposals/${encodeURIComponent(proposalId)}`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Failed to load proposal details.');
+      }
+
+      currentProposal = data.proposal;
+      if (currentProposal.approvalToken) {
+        proposalTokens.set(currentProposal.id, currentProposal.approvalToken);
+      }
+
+      renderProposalModal(currentProposal);
+      proposalModal.style.display = 'flex';
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function renderProposalModal(proposal) {
+    proposalModalFileTitle.textContent = proposal.relativePath;
+    proposalModalStatusBadge.className = `badge badge-status-${proposal.status}`;
+    proposalModalStatusBadge.textContent = proposal.status.replace(/_/g, ' ').toUpperCase();
+    proposalModalIdTag.textContent = `ID: ${proposal.id.slice(0, 8)}...`;
+
+    const diff = proposal.diff || { additions: 0, deletions: 0, unified: '' };
+    proposalModalAdds.textContent = `+${diff.additions} additions`;
+    proposalModalDels.textContent = `-${diff.deletions} deletions`;
+
+    if (proposal.status === 'conflict') {
+      proposalAlertBanner.style.display = 'block';
+      proposalAlertBanner.className = 'alert-banner alert-banner-error';
+      proposalAlertBanner.textContent = `⚠️ File Conflict: ${proposal.statusReason || 'Underlying file was modified on disk since diff was generated.'}`;
+    } else if (proposal.status === 'expired') {
+      proposalAlertBanner.style.display = 'block';
+      proposalAlertBanner.className = 'alert-banner alert-banner-warning';
+      proposalAlertBanner.textContent = '⚠️ Proposal Expired: TTL elapsed before approval.';
+    } else if (proposal.status === 'rejected') {
+      proposalAlertBanner.style.display = 'block';
+      proposalAlertBanner.className = 'alert-banner alert-banner-warning';
+      proposalAlertBanner.textContent = `Rejected: ${proposal.rejectionReason || 'User rejected this proposal.'}`;
+    } else {
+      proposalAlertBanner.style.display = 'none';
+    }
+
+    renderDiffLines(diff.unified || '(No changes or identical content)');
+
+    // Control button states based on approval state machine
+    if (proposal.status === 'awaiting_approval') {
+      proposalSafetyText.textContent = 'Awaiting explicit user review. Zero changes applied before approval.';
+      proposalApproveBtn.disabled = false;
+      proposalApproveBtn.style.display = 'inline-block';
+      proposalRejectBtn.disabled = false;
+      proposalRejectBtn.style.display = 'inline-block';
+      proposalApplyBtn.disabled = true;
+      proposalApplyBtn.title = 'Approve proposal first before applying.';
+    } else if (proposal.status === 'approved') {
+      proposalSafetyText.textContent = 'Proposal explicitly approved. Ready to apply to disk.';
+      proposalApproveBtn.disabled = true;
+      proposalApproveBtn.style.display = 'none';
+      proposalRejectBtn.disabled = false;
+      proposalRejectBtn.style.display = 'inline-block';
+      proposalApplyBtn.disabled = false;
+      proposalApplyBtn.title = 'Apply changes safely to disk with backup.';
+    } else if (proposal.status === 'applied') {
+      proposalSafetyText.textContent = `✓ Successfully applied to disk (${proposal.backupPath ? 'backup created' : 'new file'}).`;
+      proposalApproveBtn.disabled = true;
+      proposalApproveBtn.style.display = 'none';
+      proposalRejectBtn.disabled = true;
+      proposalRejectBtn.style.display = 'none';
+      proposalApplyBtn.disabled = true;
+    } else {
+      proposalSafetyText.textContent = `Terminal state: ${proposal.status}. No further actions permitted.`;
+      proposalApproveBtn.disabled = true;
+      proposalRejectBtn.disabled = true;
+      proposalApplyBtn.disabled = true;
+    }
+  }
+
+  function renderDiffLines(unifiedText) {
+    if (!proposalDiffCode) return;
+    proposalDiffCode.innerHTML = '';
+    const lines = unifiedText.split('\n');
+
+    for (const line of lines) {
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'diff-line';
+
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        lineDiv.classList.add('diff-line-add');
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        lineDiv.classList.add('diff-line-del');
+      } else if (line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')) {
+        lineDiv.classList.add('diff-line-hdr');
+      } else {
+        lineDiv.classList.add('diff-line-ctx');
+      }
+
+      lineDiv.textContent = line;
+      proposalDiffCode.appendChild(lineDiv);
+    }
+  }
+
+  async function approveProposalAction() {
+    if (!currentProposal) return;
+    const token = proposalTokens.get(currentProposal.id) || currentProposal.approvalToken;
+    if (!token) {
+      alert('Missing approval token for this proposal.');
+      return;
+    }
+
+    proposalApproveBtn.disabled = true;
+    proposalApproveBtn.textContent = 'Approving...';
+
+    try {
+      const res = await fetch(`/api/project/proposals/${encodeURIComponent(currentProposal.id)}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ approvalToken: token })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Approval failed.');
+      }
+
+      currentProposal = data.proposal;
+      renderProposalModal(currentProposal);
+      await loadProposals();
+    } catch (err) {
+      alert(`Approval error: ${err.message}`);
+    } finally {
+      proposalApproveBtn.textContent = 'Approve Change';
+    }
+  }
+
+  async function rejectProposalAction() {
+    if (!currentProposal) return;
+    const reason = prompt('Optional rejection reason:', 'User declined change') || 'User declined change';
+
+    proposalRejectBtn.disabled = true;
+    proposalRejectBtn.textContent = 'Rejecting...';
+
+    try {
+      const res = await fetch(`/api/project/proposals/${encodeURIComponent(currentProposal.id)}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ reason })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Rejection failed.');
+      }
+
+      currentProposal = data.proposal;
+      renderProposalModal(currentProposal);
+      await loadProposals();
+    } catch (err) {
+      alert(`Rejection error: ${err.message}`);
+    } finally {
+      proposalRejectBtn.textContent = 'Reject';
+    }
+  }
+
+  async function applyProposalAction() {
+    if (!currentProposal) return;
+    const token = proposalTokens.get(currentProposal.id) || currentProposal.approvalToken;
+    if (!token) {
+      alert('Missing approval token for this proposal.');
+      return;
+    }
+
+    proposalApplyBtn.disabled = true;
+    proposalApplyBtn.textContent = 'Applying to disk...';
+
+    try {
+      const res = await fetch(`/api/project/proposals/${encodeURIComponent(currentProposal.id)}/apply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ approvalToken: token })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error?.message || 'Failed to apply changes.');
+      }
+
+      alert(`Changes applied to disk successfully!\nBackup: ${data.result?.backupPath || 'none'}`);
+      await refreshProjectData();
+      await openProposalModal(currentProposal.id);
+    } catch (err) {
+      alert(`Apply error: ${err.message}`);
+      await openProposalModal(currentProposal.id);
+    } finally {
+      proposalApplyBtn.textContent = 'Apply to Disk';
+    }
+  }
+
   // Event Listeners
   if (scanProjectBtn && projectPathInput) {
     scanProjectBtn.addEventListener('click', () => {
@@ -366,6 +699,34 @@
     });
   }
 
+  if (createProposalBtn) {
+    createProposalBtn.addEventListener('click', createProposalAction);
+  }
+
+  if (proposalModalCloseBtn && proposalModal) {
+    proposalModalCloseBtn.addEventListener('click', () => {
+      proposalModal.style.display = 'none';
+    });
+
+    proposalModal.addEventListener('click', (e) => {
+      if (e.target === proposalModal) {
+        proposalModal.style.display = 'none';
+      }
+    });
+  }
+
+  if (proposalApproveBtn) {
+    proposalApproveBtn.addEventListener('click', approveProposalAction);
+  }
+
+  if (proposalRejectBtn) {
+    proposalRejectBtn.addEventListener('click', rejectProposalAction);
+  }
+
+  if (proposalApplyBtn) {
+    proposalApplyBtn.addEventListener('click', applyProposalAction);
+  }
+
   if (modalCloseBtn && fileModal) {
     modalCloseBtn.addEventListener('click', () => {
       fileModal.style.display = 'none';
@@ -382,7 +743,7 @@
     refreshBtn.addEventListener('click', () => {
       refreshBtn.disabled = true;
       refreshBtn.textContent = 'Checking...';
-      Promise.all([fetchStatus(), fetchHealth(), refreshProjectData()]).finally(() => {
+      Promise.all([fetchStatus(), fetchHealth(), refreshProjectData(), loadProposals()]).finally(() => {
         refreshBtn.disabled = false;
         refreshBtn.textContent = 'Refresh Status';
       });
@@ -393,6 +754,7 @@
   fetchStatus();
   fetchHealth();
   checkActiveProject();
+  loadProposals();
 
   // Background polling every 10 seconds
   setInterval(() => {

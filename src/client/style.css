@@ -673,3 +673,275 @@ code {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ==========================================================================
+   Milestone 3: Permission-Gated Proposals & Diff Viewer
+   ========================================================================== */
+
+.proposal-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.proposal-form {
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.proposal-textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 100px;
+}
+
+.section-sub-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.proposals-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.proposal-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+
+.proposal-card:hover {
+  border-color: var(--border-prominent);
+}
+
+.proposal-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.proposal-card-path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.proposal-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 12px;
+}
+
+.modal-card-lg {
+  max-width: 960px;
+  height: 85vh;
+}
+
+.modal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.proposal-modal-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background-color: var(--bg-surface-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+
+.diff-stats {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.diff-stat-add {
+  color: #3fb950;
+}
+
+.diff-stat-del {
+  color: #f85149;
+}
+
+.proposal-id-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.alert-banner {
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.alert-banner-error {
+  background-color: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+  border-color: rgba(244, 63, 94, 0.3);
+}
+
+.alert-banner-warning {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fde047;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+/* Diff Viewer */
+.diff-viewer {
+  flex: 1;
+  overflow: auto;
+  background-color: #0b0d11;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-code {
+  padding: 12px 0;
+  min-width: 100%;
+}
+
+.diff-line {
+  padding: 1px 16px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-line-add {
+  background-color: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+  border-left: 3px solid #3fb950;
+}
+
+.diff-line-del {
+  background-color: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border-left: 3px solid #f85149;
+}
+
+.diff-line-hdr {
+  background-color: rgba(56, 139, 253, 0.1);
+  color: #58a6ff;
+  border-left: 3px solid #58a6ff;
+  font-weight: 600;
+}
+
+.diff-line-ctx {
+  color: #cbd5e1;
+  border-left: 3px solid transparent;
+}
+
+/* Action Controls Bar */
+.proposal-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background-color: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.proposal-safety-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 250px;
+}
+
+.safety-icon {
+  font-size: 14px;
+}
+
+.proposal-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-danger {
+  background-color: rgba(244, 63, 94, 0.15);
+  color: #f43f5e;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: rgba(244, 63, 94, 0.25);
+  border-color: #f43f5e;
+}
+
+.btn-warning {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.btn-warning:hover:not(:disabled) {
+  background-color: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+}
+
+/* Status Badges */
+.badge-status-awaiting_approval {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.badge-status-approved {
+  background-color: rgba(56, 139, 253, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(56, 139, 253, 0.35);
+}
+
+.badge-status-applied {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-status-conflict {
+  background-color: rgba(244, 63, 94, 0.15);
+  color: #f43f5e;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.badge-status-expired {
+  background-color: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.badge-status-rejected {
+  background-color: rgba(100, 116, 139, 0.15);
+  color: #cbd5e1;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+}

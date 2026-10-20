@@ -15,7 +15,7 @@
         <div class="logo-mark">LD</div>
         <div class="brand-text">
           <span class="brand-title">LazyDev</span>
-          <span class="brand-sub">Milestone 2 · Safe Codebase Indexer</span>
+          <span class="brand-sub">Milestone 3 · Permission-Gated File Editing & Diff Engine</span>
         </div>
       </div>
 
@@ -75,8 +75,8 @@
 
           <div class="card">
             <span class="card-title">Security Mode</span>
-            <div class="card-value text-emerald">Read-Only</div>
-            <p class="card-desc">Zero file write or command APIs active</p>
+            <div class="card-value text-emerald">Permission-Gated</div>
+            <p class="card-desc">File writes require explicit 2-step approval</p>
           </div>
         </div>
 
@@ -103,6 +103,41 @@
           <div class="section-title">Permitted Files:</div>
           <div class="file-list-container" id="file-list-container">
             <p class="empty-state">No project loaded. Enter a path above to index files.</p>
+          </div>
+        </div>
+
+        <!-- Milestone 3: Permission-Gated File Editing & Proposals -->
+        <div class="proposal-section">
+          <div class="section-title">File Change Proposals (Permission-Gated):</div>
+          <div class="proposal-form">
+            <div class="input-group" style="margin-bottom: 8px;">
+              <input
+                type="text"
+                id="proposal-path-input"
+                class="text-input"
+                placeholder="Relative file path (e.g. src/example.ts)"
+              >
+            </div>
+            <div class="textarea-group" style="margin-bottom: 8px;">
+              <textarea
+                id="proposal-content-input"
+                class="text-input proposal-textarea"
+                placeholder="Enter proposed new file content..."
+                rows="5"
+                spellcheck="false"
+              ></textarea>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <button id="create-proposal-btn" class="btn btn-primary">Generate Diff Preview</button>
+              <span class="input-hint">Preview generates diff only. Zero changes are applied before explicit user approval.</span>
+            </div>
+          </div>
+
+          <div class="proposals-list-section" style="margin-top: 16px;">
+            <div class="section-sub-title">Active Change Proposals:</div>
+            <div class="proposals-list-container" id="proposals-list-container">
+              <p class="empty-state">No proposals created yet.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -148,19 +183,19 @@
               </div>
             </div>
 
-            <div class="roadmap-item active">
-              <div class="roadmap-marker">2</div>
+            <div class="roadmap-item completed">
+              <div class="roadmap-marker">✓</div>
               <div class="roadmap-content">
-                <strong>Milestone 2: Safe Codebase Indexer (Current)</strong>
+                <strong>Milestone 2: Safe Codebase Indexer</strong>
                 <p>Read-only file traversal, secret/binary filtering, bounded search, and anti-traversal.</p>
               </div>
             </div>
 
-            <div class="roadmap-item future">
+            <div class="roadmap-item active">
               <div class="roadmap-marker">3</div>
               <div class="roadmap-content">
-                <strong>Milestone 3: Permission-Controlled Tools & Diff Engine</strong>
-                <p>Unified visual diffs, staged file proposals, and explicit user approval.</p>
+                <strong>Milestone 3: Permission-Gated File Editing & Diff Engine (Current)</strong>
+                <p>Unified visual diffs, staged file proposals, explicit 2-phase user approval, and atomic file recovery.</p>
               </div>
             </div>
 
@@ -202,9 +237,48 @@
       </div>
     </div>
 
+    <!-- Proposal Diff & Approval Modal (Milestone 3) -->
+    <div class="modal-backdrop" id="proposal-modal" style="display: none;">
+      <div class="modal-card modal-card-lg">
+        <div class="modal-header">
+          <div class="modal-header-left">
+            <span class="modal-title" id="proposal-modal-file-title">File Diff Preview</span>
+            <span class="badge badge-accent" id="proposal-modal-status-badge">Awaiting Approval</span>
+          </div>
+          <button id="proposal-modal-close-btn" class="btn btn-secondary">Close</button>
+        </div>
+
+        <div class="proposal-modal-meta">
+          <div class="diff-stats">
+            <span class="diff-stat-add" id="proposal-modal-adds">+0 additions</span>
+            <span class="diff-stat-del" id="proposal-modal-dels">-0 deletions</span>
+          </div>
+          <div class="proposal-id-tag" id="proposal-modal-id-tag">ID: —</div>
+        </div>
+
+        <div id="proposal-alert-banner" class="alert-banner" style="display: none;"></div>
+
+        <div class="diff-viewer" id="proposal-diff-container">
+          <div class="diff-code" id="proposal-diff-code"></div>
+        </div>
+
+        <div class="proposal-actions-bar">
+          <div class="proposal-safety-notice">
+            <span class="safety-icon">🔒</span>
+            <span id="proposal-safety-text">Review diff carefully before approving. No changes are written to disk without explicit approval.</span>
+          </div>
+          <div class="proposal-buttons">
+            <button id="proposal-reject-btn" class="btn btn-danger">Reject</button>
+            <button id="proposal-approve-btn" class="btn btn-warning">Approve Change</button>
+            <button id="proposal-apply-btn" class="btn btn-primary" disabled>Apply to Disk</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer -->
     <footer class="bottom-bar">
-      <span>LazyDev · Slow and Steady Open-Source AI · Read-Only Inspection Layer</span>
+      <span>LazyDev · Slow and Steady Open-Source AI · Permission-Gated Editing Layer</span>
       <span id="footer-last-sync">Last ping: —</span>
     </footer>
   </div>

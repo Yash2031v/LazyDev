@@ -53,6 +53,13 @@ export class ProjectService {
   }
 
   /**
+   * Returns active ignore engine for the project, or null if unset.
+   */
+  getIgnoreEngine(): IgnoreEngine | null {
+    return this.ignoreEngine;
+  }
+
+  /**
    * Sets and scans a new project root.
    */
   async setProjectRoot(candidatePath: string, customLimits?: Partial<ScanLimits>): Promise<ScanResult> {

@@ -18,6 +18,8 @@ export const DEFAULT_EXCLUDED_DIRECTORIES = new Set([
   'target', 'bin', 'obj', '__pycache__', '.pytest_cache',
   // Sensitive configuration and credential directories
   '.ssh', '.aws', '.azure', '.kube', '.gnupg',
+  // Internal LazyDev artifacts
+  '.lazydev',
   // IDEs and local tooling
   '.vscode', '.idea', '.vs'
 ]);
@@ -39,7 +41,10 @@ export const SECRET_FILE_PATTERNS: readonly RegExp[] = [
   /^(credentials|token|tokens|secrets)(\.json|\.yml|\.yaml|\.txt)?$/i,
   /^service[-_]account.*\.json$/i,
   /\.(secret|kdbx|htpasswd)$/i,
-  /aws_access_key/i
+  /aws_access_key/i,
+
+  // Internal LazyDev temporary / backup patterns
+  /^\.lazydev-(tmp|backup)-/i
 ];
 
 export interface GitIgnoreRule {

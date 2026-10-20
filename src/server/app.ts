@@ -23,6 +23,9 @@ async function resolveClientDir(): Promise<string> {
   }
 }
 
+import { EditorService, ProposalError, ProposalNotFoundError, ProposalConflictError } from './editor/editor-service.js';
+import type { ProposalCreateRequest } from './editor/types.js';
+
 export class PayloadTooLargeError extends Error {
   constructor(message: string) {
     super(message);
@@ -72,10 +75,12 @@ export function createRequestHandler(
   config: AppConfig,
   ollamaClient: OllamaClient,
   clientDirOverride?: string,
-  projectServiceOverride?: ProjectService
+  projectServiceOverride?: ProjectService,
+  editorServiceOverride?: EditorService
 ) {
   const startTime = Date.now();
   const projectService = projectServiceOverride ?? new ProjectService();
+  const editorService = editorServiceOverride ?? new EditorService();
 
   return async function requestHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
@@ -126,7 +131,7 @@ export function createRequestHandler(
           app: {
             name: 'LazyDev',
             version: '0.1.0',
-            milestone: 'Milestone 2: Safe Codebase Indexer & Read-Only Tools',
+            milestone: 'Milestone 3: Permission-Gated File Editing and Diff Engine',
             environment: 'local'
           },
           runtime: {
@@ -295,7 +300,209 @@ export function createRequestHandler(
         }
       }
 
-      // 3. Static Assets
+      // 4. File Editing & Proposal Endpoints (Milestone 3)
+      if (pathname === '/api/project/proposals') {
+        if (method === 'GET') {
+          const root = projectService.getProjectRoot() ?? undefined;
+          const list = editorService.listProposals(root);
+          sendJson(res, 200, { proposals: list });
+          return;
+        }
+
+        if (method === 'POST') {
+          const canonicalRoot = projectService.getProjectRoot();
+          const ignoreEngine = projectService.getIgnoreEngine();
+          if (!canonicalRoot || !ignoreEngine) {
+            sendError(res, 400, 'No active project root set. Please configure a project root first.');
+            return;
+          }
+
+          try {
+            const body = await parseJsonBody<ProposalCreateRequest>(req);
+            const proposal = await editorService.createProposal(canonicalRoot, ignoreEngine, body);
+            sendJson(res, 201, {
+              message: 'Proposal created successfully. Explicit user approval is required before applying.',
+              proposal
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof PayloadTooLargeError) {
+              sendError(res, 413, err.message);
+              return;
+            }
+            if (err instanceof PathValidationError || err instanceof ProposalError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
+        }
+
+        res.setHeader('Allow', 'GET, POST');
+        sendError(res, 405, 'Method Not Allowed');
+        return;
+      }
+
+      if (pathname.startsWith('/api/project/proposals/')) {
+        const segments = pathname.replace(/^\/api\/project\/proposals\//, '').split('/');
+        const proposalId = segments[0];
+        const action = segments[1];
+
+        if (!proposalId) {
+          sendError(res, 400, 'Missing proposal ID.');
+          return;
+        }
+
+        const canonicalRoot = projectService.getProjectRoot() ?? undefined;
+
+        // GET /api/project/proposals/:id
+        if (!action && method === 'GET') {
+          try {
+            const proposal = await editorService.getProposal(proposalId, canonicalRoot);
+            sendJson(res, 200, { proposal });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof ProposalNotFoundError) {
+              sendError(res, 404, err.message);
+              return;
+            }
+            if (err instanceof ProposalError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            throw err;
+          }
+        }
+
+        // POST /api/project/proposals/:id/approve
+        if (action === 'approve') {
+          if (method !== 'POST') {
+            res.setHeader('Allow', 'POST');
+            sendError(res, 405, 'Method Not Allowed');
+            return;
+          }
+
+          if (!canonicalRoot) {
+            sendError(res, 400, 'No active project root set.');
+            return;
+          }
+
+          try {
+            const body = await parseJsonBody<{ approvalToken?: string }>(req);
+            if (!body.approvalToken || typeof body.approvalToken !== 'string') {
+              sendError(res, 400, 'Missing or invalid "approvalToken" in request body.');
+              return;
+            }
+
+            const proposal = await editorService.approveProposal(proposalId, body.approvalToken, canonicalRoot);
+            sendJson(res, 200, {
+              message: 'Proposal approved. It can now be applied to disk.',
+              proposal
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof ProposalNotFoundError) {
+              sendError(res, 404, err.message);
+              return;
+            }
+            if (err instanceof ProposalError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
+        }
+
+        // POST /api/project/proposals/:id/reject
+        if (action === 'reject') {
+          if (method !== 'POST') {
+            res.setHeader('Allow', 'POST');
+            sendError(res, 405, 'Method Not Allowed');
+            return;
+          }
+
+          if (!canonicalRoot) {
+            sendError(res, 400, 'No active project root set.');
+            return;
+          }
+
+          try {
+            const body = await parseJsonBody<{ reason?: string }>(req);
+            const proposal = await editorService.rejectProposal(proposalId, body.reason, canonicalRoot);
+            sendJson(res, 200, {
+              message: 'Proposal rejected.',
+              proposal
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof ProposalNotFoundError) {
+              sendError(res, 404, err.message);
+              return;
+            }
+            if (err instanceof ProposalError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
+        }
+
+        // POST /api/project/proposals/:id/apply
+        if (action === 'apply') {
+          if (method !== 'POST') {
+            res.setHeader('Allow', 'POST');
+            sendError(res, 405, 'Method Not Allowed');
+            return;
+          }
+
+          if (!canonicalRoot) {
+            sendError(res, 400, 'No active project root set.');
+            return;
+          }
+
+          try {
+            const body = await parseJsonBody<{ approvalToken?: string }>(req);
+            if (!body.approvalToken || typeof body.approvalToken !== 'string') {
+              sendError(res, 400, 'Missing or invalid "approvalToken" in request body.');
+              return;
+            }
+
+            const result = await editorService.applyProposal(proposalId, body.approvalToken, canonicalRoot);
+            sendJson(res, 200, {
+              message: 'File changes applied to disk successfully.',
+              result
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof ProposalNotFoundError) {
+              sendError(res, 404, err.message);
+              return;
+            }
+            if (err instanceof ProposalConflictError) {
+              sendError(res, 409, err.message);
+              return;
+            }
+            if (err instanceof ProposalError) {
+              sendError(res, 400, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
+        }
+
+        sendError(res, 404, 'Endpoint not found.');
+        return;
+      }
+
+      // 5. Static Assets
       if (method === 'GET' || method === 'HEAD') {
         const clientDir = clientDirOverride ?? (await resolveClientDir());
 
