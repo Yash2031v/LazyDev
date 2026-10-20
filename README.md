@@ -300,7 +300,7 @@ LazyDev is pre-configured for one-click deployment as a Web Service on [Render](
    - Connect your GitHub repository: `Yash2031v/LazyDev`.
 2. **Configure Runtime & Commands**:
    - **Environment**: `Node`
-   - **Build Command**: `npm run build`
+   - **Build Command**: `npm ci && npm run build`
    - **Start Command**: `npm start`
    - **Plan**: `Free`
 3. **Configure Environment Variables**:

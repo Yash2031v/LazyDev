@@ -3,7 +3,7 @@ services:
     name: lazydev-demo
     runtime: node
     plan: free
-    buildCommand: npm run build
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
