@@ -29,23 +29,35 @@ export function applySecurityHeaders(res: ServerResponse): void {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
 }
 
+export function matchesHostPattern(candidateHost: string, pattern: string): boolean {
+  const lowerCandidate = candidateHost.toLowerCase().trim();
+  const lowerPattern = pattern.toLowerCase().trim();
+  if (lowerPattern === '*') {
+    return true;
+  }
+
+  if (lowerPattern.startsWith('*.')) {
+    const suffix = lowerPattern.slice(2);
+    const candidateWithoutPort = lowerCandidate.split(':')[0] || '';
+    return candidateWithoutPort === suffix || candidateWithoutPort.endsWith('.' + suffix);
+  }
+
+  if (lowerPattern.endsWith(':*')) {
+    const prefix = lowerPattern.slice(0, -2);
+    return lowerCandidate === prefix || lowerCandidate.startsWith(prefix + ':');
+  }
+
+  return lowerPattern === lowerCandidate;
+}
+
 export function validateHostHeader(req: IncomingMessage, allowedHosts: readonly string[]): boolean {
   const hostHeader = req.headers['host'];
   if (!hostHeader) {
     return false;
   }
 
-  // Normalize (strip any surrounding whitespace, lowercase)
   const normalizedHost = hostHeader.trim().toLowerCase();
-
-  return allowedHosts.some(allowed => {
-    const lowerAllowed = allowed.toLowerCase();
-    if (lowerAllowed.endsWith(':*')) {
-      const prefix = lowerAllowed.slice(0, -2);
-      return normalizedHost === prefix || normalizedHost.startsWith(prefix + ':');
-    }
-    return lowerAllowed === normalizedHost;
-  });
+  return allowedHosts.some(allowed => matchesHostPattern(normalizedHost, allowed));
 }
 
 /**
@@ -70,20 +82,12 @@ export function validateOriginHeader(
 
   try {
     const originUrl = new URL(originHeader.trim());
-    // Only allow http or https loopback origins
     if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
       return false;
     }
 
     const originHost = originUrl.host.toLowerCase();
-    return allowedHosts.some(allowed => {
-      const lowerAllowed = allowed.toLowerCase();
-      if (lowerAllowed.endsWith(':*')) {
-        const prefix = lowerAllowed.slice(0, -2);
-        return originHost === prefix || originHost.startsWith(prefix + ':');
-      }
-      return lowerAllowed === originHost;
-    });
+    return allowedHosts.some(allowed => matchesHostPattern(originHost, allowed));
   } catch {
     return false;
   }
@@ -91,6 +95,7 @@ export function validateOriginHeader(
 
 export function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
   applySecurityHeaders(res);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   const payload = JSON.stringify(data);
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',

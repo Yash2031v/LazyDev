@@ -10,6 +10,7 @@ export interface AppConfig {
   readonly ollamaTimeoutMs: number;
   readonly allowedHosts: readonly string[];
   readonly aiMode: 'ollama' | 'demo';
+  readonly isPublicDemo: boolean;
 }
 
 export class ConfigError extends Error {
@@ -35,11 +36,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port = parsed;
   }
 
-  // Validate HOST - LazyDev must NEVER bind to 0.0.0.0 or any public interface
-  const host = (env['HOST'] || DEFAULT_HOST).trim();
-  if (host !== '127.0.0.1' && host !== 'localhost') {
+  // Check if explicit public demo deployment is active
+  const isPublicDemo =
+    env['LAZYDEV_PUBLIC_DEMO'] === 'true' ||
+    env['LAZYDEV_DEPLOY_MODE'] === 'public-demo';
+
+  // Validate HOST - Local development permits ONLY loopback (127.0.0.1/localhost).
+  // Public demo allows 0.0.0.0 for platform container ingress.
+  const defaultHost = isPublicDemo ? '0.0.0.0' : DEFAULT_HOST;
+  const host = (env['HOST'] || defaultHost).trim();
+  if (!isPublicDemo && host !== '127.0.0.1' && host !== 'localhost') {
     throw new ConfigError(
       `Invalid HOST: "${host}". For security, LazyDev local server only permits binding to 127.0.0.1 or localhost.`
+    );
+  }
+  if (isPublicDemo && host !== '0.0.0.0' && host !== '127.0.0.1' && host !== 'localhost') {
+    throw new ConfigError(
+      `Invalid HOST: "${host}". Public demo mode permits binding to 0.0.0.0, 127.0.0.1, or localhost.`
     );
   }
 
@@ -105,20 +118,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   // Validate LAZYDEV_AI_MODE - Opt-in local demo mode or standard Ollama
-  const rawAiMode = (env['LAZYDEV_AI_MODE'] || 'ollama').trim().toLowerCase();
+  const defaultAiMode = isPublicDemo ? 'demo' : 'ollama';
+  const rawAiMode = (env['LAZYDEV_AI_MODE'] || defaultAiMode).trim().toLowerCase();
   if (rawAiMode !== 'ollama' && rawAiMode !== 'demo') {
     throw new ConfigError(
       `Invalid LAZYDEV_AI_MODE: "${env['LAZYDEV_AI_MODE']}". Must be "ollama" or "demo".`
     );
   }
+  if (isPublicDemo && rawAiMode !== 'demo') {
+    throw new ConfigError(
+      `Invalid LAZYDEV_AI_MODE: "${rawAiMode}". Public demo mode requires LAZYDEV_AI_MODE=demo.`
+    );
+  }
   const aiMode: 'ollama' | 'demo' = rawAiMode;
 
   // Allowed Host header values
-  const allowedHosts = Object.freeze(
-    port === 0
+  let allowedHostsList: string[];
+  if (env['ALLOWED_HOSTS'] && env['ALLOWED_HOSTS'].trim() !== '') {
+    allowedHostsList = env['ALLOWED_HOSTS'].split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
+  } else if (isPublicDemo) {
+    allowedHostsList = [
+      'localhost',
+      '127.0.0.1',
+      'localhost:*',
+      '127.0.0.1:*',
+      '0.0.0.0:*',
+      '*.onrender.com',
+      'onrender.com'
+    ];
+    if (port !== 0) {
+      allowedHostsList.push(`localhost:${port}`, `127.0.0.1:${port}`);
+    }
+  } else {
+    allowedHostsList = port === 0
       ? ['localhost', '127.0.0.1', 'localhost:*', '127.0.0.1:*']
-      : ['localhost', '127.0.0.1', `localhost:${port}`, `127.0.0.1:${port}`]
-  );
+      : ['localhost', '127.0.0.1', `localhost:${port}`, `127.0.0.1:${port}`];
+  }
+  const allowedHosts = Object.freeze(allowedHostsList);
 
   return Object.freeze({
     port,
@@ -126,6 +162,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ollamaHost: rawOllamaHost,
     ollamaTimeoutMs,
     allowedHosts,
-    aiMode
+    aiMode,
+    isPublicDemo
   });
 }

@@ -268,7 +268,58 @@ Cancels an active AI generation task by task ID using isolated AbortControllers.
 
 ---
 
-## 6. Architecture Roadmap
+## 6. Public Demo Mode vs. Local Development Mode
+
+LazyDev supports two distinct operational modes designed for security and hackathon judging:
+
+| Feature / Property | Local Development Mode (Default) | Public Demo Mode (Render Hosted) |
+| :--- | :--- | :--- |
+| **Primary Use Case** | Real pair programming on developer machine | Live hackathon demo & judge evaluation |
+| **Activation** | Default or `LAZYDEV_AI_MODE=demo` | `LAZYDEV_PUBLIC_DEMO=true` |
+| **Network Interface** | Loopback only: `127.0.0.1` | Platform interface: `0.0.0.0` (Render) |
+| **Server Disk Access** | Active local project directory | **ZERO disk access** (403 Forbidden on `POST /api/project/root`) |
+| **Workspace Storage** | Real local filesystem with atomic rollback backups | Isolated disposable in-memory virtual sandbox |
+| **AI Model Inference** | Local Ollama (`http://127.0.0.1:11434`) | Offline deterministic sample proposals (no Ollama required) |
+| **Rate Limiting** | Disabled (local developer speed) | Active sliding window (30 mutations/min per session/IP) |
+| **Anti-CSRF & Origin** | Local origin & loopback host validation | Verified host wildcard matching (`*.onrender.com`) |
+| **External Dependencies**| Zero cloud APIs, zero telemetry, zero databases | Zero cloud APIs, zero telemetry, zero databases |
+
+---
+
+## 7. Render Deployment Guide (Public Demo Mode Only)
+
+LazyDev is pre-configured for one-click deployment as a Web Service on [Render](https://render.com).
+
+> [!IMPORTANT]
+> When deployed to Render or any public hosting provider, LazyDev runs strictly in **Public Demo Mode**. All arbitrary filesystem reads, writes, path browsing, and shell executions are blocked. File operations and proposals exist purely in disposable memory per judge session.
+
+### Manual Render Setup Steps
+
+1. **Create Web Service**:
+   - In your Render dashboard, click **New +** → **Web Service**.
+   - Connect your GitHub repository: `Yash2031v/LazyDev`.
+2. **Configure Runtime & Commands**:
+   - **Environment**: `Node`
+   - **Build Command**: `npm run build`
+   - **Start Command**: `npm start`
+   - **Plan**: `Free`
+3. **Configure Environment Variables**:
+   Add the following environment variables in the Render dashboard:
+   - `NODE_ENV`: `production`
+   - `LAZYDEV_PUBLIC_DEMO`: `true`
+   - `LAZYDEV_AI_MODE`: `demo`
+   - `HOST`: `0.0.0.0`
+   - `ALLOWED_HOSTS`: `*.onrender.com,localhost:*,127.0.0.1:*`
+4. **Health Check Path**:
+   - Set Health Check Path to: `/api/health`
+5. **Deploy**:
+   - Click **Create Web Service**.
+   - Once deployed, open `https://<your-service-name>.onrender.com` in your browser.
+   - The UI will display the **Public Demo** banner with a pre-indexed sample project ready for judges to test AI proposals, visual diffs, and permission-gated approvals.
+
+---
+
+## 8. Architecture Roadmap
 
 | Milestone | Focus | Status |
 | :---: | :--- | :---: |

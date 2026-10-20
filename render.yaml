@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: lazydev-demo
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LAZYDEV_PUBLIC_DEMO
+        value: "true"
+      - key: LAZYDEV_AI_MODE
+        value: demo
+      - key: HOST
+        value: 0.0.0.0
+      - key: ALLOWED_HOSTS
+        value: "*.onrender.com,localhost:*,127.0.0.1:*"

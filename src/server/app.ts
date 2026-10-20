@@ -7,6 +7,12 @@ import { OllamaClient } from './ollama.js';
 import { applySecurityHeaders, sendError, sendJson, validateHostHeader, validateOriginHeader } from './security.js';
 import { ProjectService, ProjectAccessError } from './project/project-service.js';
 import { PathValidationError, SymlinkEscapeError } from './project/path-validator.js';
+import { EditorService, ProposalError, ProposalNotFoundError, ProposalConflictError } from './editor/editor-service.js';
+import type { ProposalCreateRequest } from './editor/types.js';
+import { OllamaChatError } from './ollama.js';
+import { AiService, AiServiceError, type AiTaskRequest } from './ai/ai-service.js';
+import { DemoProjectManager } from './demo/demo-project.js';
+import { InMemoryRateLimiter } from './demo/rate-limiter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,11 +28,6 @@ async function resolveClientDir(): Promise<string> {
     return PROD_CLIENT_DIR;
   }
 }
-
-import { EditorService, ProposalError, ProposalNotFoundError, ProposalConflictError } from './editor/editor-service.js';
-import type { ProposalCreateRequest } from './editor/types.js';
-import { OllamaChatError } from './ollama.js';
-import { AiService, AiServiceError, type AiTaskRequest } from './ai/ai-service.js';
 
 export class PayloadTooLargeError extends Error {
   constructor(message: string) {
@@ -79,12 +80,40 @@ export function createRequestHandler(
   clientDirOverride?: string,
   projectServiceOverride?: ProjectService,
   editorServiceOverride?: EditorService,
-  aiServiceOverride?: AiService
+  aiServiceOverride?: AiService,
+  demoManagerOverride?: DemoProjectManager,
+  rateLimiterOverride?: InMemoryRateLimiter
 ) {
   const startTime = Date.now();
   const projectService = projectServiceOverride ?? new ProjectService();
   const editorService = editorServiceOverride ?? new EditorService();
   const aiService = aiServiceOverride ?? new AiService(ollamaClient, projectService, editorService, undefined, config.aiMode);
+  const demoManager = demoManagerOverride ?? new DemoProjectManager();
+  const rateLimiter = rateLimiterOverride ?? new InMemoryRateLimiter({ windowMs: 60_000, maxRequests: 30 });
+
+  function getSessionId(req: IncomingMessage): string {
+    const custom = req.headers['x-demo-session'];
+    if (typeof custom === 'string' && custom.trim()) {
+      return custom.trim().slice(0, 100);
+    }
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      return forwarded.split(',')[0]!.trim();
+    }
+    return req.socket.remoteAddress || 'demo-client';
+  }
+
+  function checkMutationRateLimit(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!config.isPublicDemo) return true;
+    const key = getSessionId(req);
+    const result = rateLimiter.check(key);
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(result.retryAfterSec ?? 60));
+      sendError(res, 429, 'Rate limit exceeded for demo mutations. Please wait before retrying.');
+      return false;
+    }
+    return true;
+  }
 
   return async function requestHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
@@ -129,6 +158,38 @@ export function createRequestHandler(
           return;
         }
 
+        if (config.isPublicDemo) {
+          sendJson(res, 200, {
+            app: {
+              name: 'LazyDev',
+              version: '0.1.0',
+              milestone: 'Milestone 4: Local AI Assistant & Permission-Gated Edit Automation',
+              environment: 'public-demo',
+              aiMode: 'demo',
+              isPublicDemo: true
+            },
+            runtime: {
+              node: process.version,
+              platform: 'sandbox',
+              arch: 'sandbox'
+            },
+            project: {
+              hasActiveProject: true,
+              root: 'demo-sandbox'
+            },
+            ollama: {
+              connected: false,
+              endpoint: 'none (demo mode)',
+              models: ['demo-sample-model (offline sample)'],
+              details: 'Public Demo Mode active — running in safe in-memory sandbox without Ollama or disk access.',
+              latencyMs: null
+            },
+            aiMode: 'demo',
+            isPublicDemo: true
+          });
+          return;
+        }
+
         const isDemo = config.aiMode === 'demo';
         const ollamaStatus = isDemo
           ? {
@@ -165,6 +226,23 @@ export function createRequestHandler(
 
       // 3. Project API Routes (Milestone 2)
       if (pathname === '/api/project/root') {
+        if (config.isPublicDemo) {
+          if (method === 'GET') {
+            sendJson(res, 200, {
+              root: 'demo-sandbox',
+              hasActiveProject: true
+            });
+            return;
+          }
+          if (method === 'POST') {
+            sendError(res, 403, 'Project root modification is disabled in public demo mode.');
+            return;
+          }
+          res.setHeader('Allow', 'GET, POST');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
         if (method === 'GET') {
           sendJson(res, 200, {
             root: projectService.getProjectRoot(),
@@ -215,6 +293,12 @@ export function createRequestHandler(
           return;
         }
 
+        if (config.isPublicDemo) {
+          const scan = demoManager.getFiles(getSessionId(req));
+          sendJson(res, 200, scan);
+          return;
+        }
+
         try {
           const scan = await projectService.getScanResult();
           sendJson(res, 200, scan);
@@ -232,6 +316,12 @@ export function createRequestHandler(
         if (method !== 'GET') {
           res.setHeader('Allow', 'GET');
           sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        if (config.isPublicDemo) {
+          const summary = demoManager.getSummary(getSessionId(req));
+          sendJson(res, 200, summary);
           return;
         }
 
@@ -261,6 +351,18 @@ export function createRequestHandler(
           return;
         }
 
+        if (config.isPublicDemo) {
+          try {
+            const fileResult = demoManager.readFile(getSessionId(req), relativePath);
+            sendJson(res, 200, fileResult);
+            return;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 404, msg);
+            return;
+          }
+        }
+
         try {
           const fileResult = await projectService.readFile(relativePath);
           sendJson(res, 200, fileResult);
@@ -283,6 +385,34 @@ export function createRequestHandler(
           res.setHeader('Allow', 'POST');
           sendError(res, 405, 'Method Not Allowed');
           return;
+        }
+
+        if (config.isPublicDemo) {
+          if (!checkMutationRateLimit(req, res)) return;
+          try {
+            const body = await parseJsonBody<{ query?: string; caseSensitive?: boolean; maxResults?: number }>(req);
+            if (!body.query || typeof body.query !== 'string') {
+              sendError(res, 400, 'Missing or invalid "query" string in request body.');
+              return;
+            }
+
+            const searchResult = demoManager.searchFiles(
+              getSessionId(req),
+              body.query,
+              body.caseSensitive,
+              body.maxResults
+            );
+            sendJson(res, 200, searchResult);
+            return;
+          } catch (err: unknown) {
+            if (err instanceof PayloadTooLargeError) {
+              sendError(res, 413, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
         }
 
         try {
@@ -317,6 +447,44 @@ export function createRequestHandler(
 
       // 4. File Editing & Proposal Endpoints (Milestone 3)
       if (pathname === '/api/project/proposals') {
+        if (config.isPublicDemo) {
+          if (method === 'GET') {
+            const list = demoManager.listProposals(getSessionId(req));
+            sendJson(res, 200, { proposals: list });
+            return;
+          }
+
+          if (method === 'POST') {
+            if (!checkMutationRateLimit(req, res)) return;
+            try {
+              const body = await parseJsonBody<ProposalCreateRequest>(req);
+              if (!body.relativePath) {
+                sendError(res, 400, 'Missing "relativePath" in request body.');
+                return;
+              }
+              const content = body.newContent ?? body.proposedContent ?? '';
+              const proposal = demoManager.createProposal(getSessionId(req), body.relativePath, content);
+              sendJson(res, 201, {
+                message: 'Proposal created successfully in demo sandbox. Explicit user approval is required before applying.',
+                proposal
+              });
+              return;
+            } catch (err: unknown) {
+              if (err instanceof PayloadTooLargeError) {
+                sendError(res, 413, err.message);
+                return;
+              }
+              const msg = err instanceof Error ? err.message : String(err);
+              sendError(res, 400, msg);
+              return;
+            }
+          }
+
+          res.setHeader('Allow', 'GET, POST');
+          sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
         if (method === 'GET') {
           const root = projectService.getProjectRoot() ?? undefined;
           const list = editorService.listProposals(root);
@@ -367,6 +535,110 @@ export function createRequestHandler(
 
         if (!proposalId) {
           sendError(res, 400, 'Missing proposal ID.');
+          return;
+        }
+
+        if (config.isPublicDemo) {
+          const sessionId = getSessionId(req);
+
+          // GET /api/project/proposals/:id
+          if (!action && method === 'GET') {
+            try {
+              const proposal = demoManager.getProposal(sessionId, proposalId);
+              // Defend against credential exposure: never leak approval token on public GET endpoint
+              const { approvalToken: _token, ...safeProposal } = proposal;
+              sendJson(res, 200, { proposal: safeProposal });
+              return;
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              sendError(res, 404, msg);
+              return;
+            }
+          }
+
+          // POST /api/project/proposals/:id/approve
+          if (action === 'approve') {
+            if (method !== 'POST') {
+              res.setHeader('Allow', 'POST');
+              sendError(res, 405, 'Method Not Allowed');
+              return;
+            }
+            if (!checkMutationRateLimit(req, res)) return;
+
+            try {
+              const body = await parseJsonBody<{ approvalToken?: string }>(req);
+              if (!body.approvalToken || typeof body.approvalToken !== 'string') {
+                sendError(res, 400, 'Missing or invalid "approvalToken" in request body.');
+                return;
+              }
+
+              const proposal = demoManager.approveProposal(sessionId, proposalId, body.approvalToken);
+              sendJson(res, 200, {
+                message: 'Proposal approved in demo sandbox. It can now be applied.',
+                proposal
+              });
+              return;
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              sendError(res, 400, msg);
+              return;
+            }
+          }
+
+          // POST /api/project/proposals/:id/reject
+          if (action === 'reject') {
+            if (method !== 'POST') {
+              res.setHeader('Allow', 'POST');
+              sendError(res, 405, 'Method Not Allowed');
+              return;
+            }
+            if (!checkMutationRateLimit(req, res)) return;
+
+            try {
+              const body = await parseJsonBody<{ reason?: string }>(req);
+              const proposal = demoManager.rejectProposal(sessionId, proposalId, body.reason);
+              sendJson(res, 200, {
+                message: 'Proposal rejected.',
+                proposal
+              });
+              return;
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              sendError(res, 400, msg);
+              return;
+            }
+          }
+
+          // POST /api/project/proposals/:id/apply
+          if (action === 'apply') {
+            if (method !== 'POST') {
+              res.setHeader('Allow', 'POST');
+              sendError(res, 405, 'Method Not Allowed');
+              return;
+            }
+            if (!checkMutationRateLimit(req, res)) return;
+
+            try {
+              const body = await parseJsonBody<{ approvalToken?: string }>(req);
+              if (!body.approvalToken || typeof body.approvalToken !== 'string') {
+                sendError(res, 400, 'Missing or invalid "approvalToken" in request body.');
+                return;
+              }
+
+              const result = demoManager.applyProposal(sessionId, proposalId, body.approvalToken);
+              sendJson(res, 200, {
+                message: 'File changes applied to demo in-memory sandbox successfully.',
+                result
+              });
+              return;
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              sendError(res, 400, msg);
+              return;
+            }
+          }
+
+          sendError(res, 404, 'Endpoint not found.');
           return;
         }
 
@@ -528,6 +800,14 @@ export function createRequestHandler(
           return;
         }
 
+        if (config.isPublicDemo) {
+          sendJson(res, 200, {
+            models: ['demo-sample-model (offline sample)'],
+            mode: 'demo'
+          });
+          return;
+        }
+
         try {
           const models = await aiService.getAvailableModels();
           sendJson(res, 200, {
@@ -547,6 +827,29 @@ export function createRequestHandler(
           res.setHeader('Allow', 'POST');
           sendError(res, 405, 'Method Not Allowed');
           return;
+        }
+
+        if (config.isPublicDemo) {
+          if (!checkMutationRateLimit(req, res)) return;
+          try {
+            const body = await parseJsonBody<AiTaskRequest & { targetFile?: string; prompt?: string }>(req);
+            const targetFile = body.targetFilePath || body.targetFile;
+            const prompt = body.taskPrompt || body.prompt;
+            const result = demoManager.executeSampleTask(getSessionId(req), targetFile, prompt);
+            sendJson(res, 201, {
+              message: 'AI edit proposal staged successfully in demo sandbox.',
+              result
+            });
+            return;
+          } catch (err: unknown) {
+            if (err instanceof PayloadTooLargeError) {
+              sendError(res, 413, err.message);
+              return;
+            }
+            const msg = err instanceof Error ? err.message : String(err);
+            sendError(res, 400, msg);
+            return;
+          }
         }
 
         try {
@@ -596,6 +899,14 @@ export function createRequestHandler(
         if (method !== 'POST') {
           res.setHeader('Allow', 'POST');
           sendError(res, 405, 'Method Not Allowed');
+          return;
+        }
+
+        if (config.isPublicDemo) {
+          sendJson(res, 200, {
+            message: 'Task cancelled successfully.',
+            cancelled: true
+          });
           return;
         }
 

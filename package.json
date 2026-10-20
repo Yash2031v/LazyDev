@@ -6,7 +6,7 @@
   "main": "dist/server/index.js",
   "scripts": {
     "dev": "tsx src/server/index.ts",
-    "build": "tsc",
+    "build": "tsc && node -e \"fs.cpSync('src/client', 'dist/client', {recursive: true})\"",
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\""

@@ -1,6 +1,7 @@
 /**
  * LazyDev Server Bootstrap
- * Binds strictly to 127.0.0.1 and manages graceful lifecycle shutdown.
+ * Binds strictly to 127.0.0.1 in local development, or platform interface in verified public demo mode.
+ * Manages graceful lifecycle shutdown.
  */
 
 import * as http from 'node:http';
@@ -11,6 +12,8 @@ import { createRequestHandler } from './app.js';
 import { ProjectService } from './project/project-service.js';
 import { EditorService } from './editor/editor-service.js';
 import { AiService } from './ai/ai-service.js';
+import { DemoProjectManager } from './demo/demo-project.js';
+import { InMemoryRateLimiter } from './demo/rate-limiter.js';
 
 export interface ServerInstance {
   readonly server: http.Server;
@@ -18,6 +21,8 @@ export interface ServerInstance {
   readonly projectService: ProjectService;
   readonly editorService: EditorService;
   readonly aiService: AiService;
+  readonly demoManager: DemoProjectManager;
+  readonly rateLimiter: InMemoryRateLimiter;
   readonly close: () => Promise<void>;
 }
 
@@ -26,7 +31,9 @@ export function startServer(
   clientDirOverride?: string,
   customProjectService?: ProjectService,
   customEditorService?: EditorService,
-  customAiService?: AiService
+  customAiService?: AiService,
+  customDemoManager?: DemoProjectManager,
+  customRateLimiter?: InMemoryRateLimiter
 ): Promise<ServerInstance> {
   const config = customConfig ?? loadConfig();
   const ollamaClient = new OllamaClient({
@@ -36,6 +43,8 @@ export function startServer(
   const projectService = customProjectService ?? new ProjectService();
   const editorService = customEditorService ?? new EditorService();
   const aiService = customAiService ?? new AiService(ollamaClient, projectService, editorService, undefined, config.aiMode);
+  const demoManager = customDemoManager ?? new DemoProjectManager();
+  const rateLimiter = customRateLimiter ?? new InMemoryRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 
   const requestHandler = createRequestHandler(
     config,
@@ -43,7 +52,9 @@ export function startServer(
     clientDirOverride,
     projectService,
     editorService,
-    aiService
+    aiService,
+    demoManager,
+    rateLimiter
   );
   const server = http.createServer(requestHandler);
 
@@ -52,9 +63,10 @@ export function startServer(
       reject(err);
     });
 
-    // Strictly bind to 127.0.0.1 - NEVER 0.0.0.0
     server.listen(config.port, config.host, () => {
       const close = (): Promise<void> => {
+        demoManager.destroy();
+        rateLimiter.destroy();
         return new Promise((resClose, rejClose) => {
           server.close((err) => {
             if (err) rejClose(err);
@@ -63,7 +75,7 @@ export function startServer(
         });
       };
 
-      resolve({ server, config, projectService, editorService, aiService, close });
+      resolve({ server, config, projectService, editorService, aiService, demoManager, rateLimiter, close });
     });
   });
 }
@@ -77,12 +89,17 @@ if (isMainModule) {
     const config = loadConfig();
     startServer(config)
       .then(({ close }) => {
-        console.log(`[LazyDev] Local server listening at http://${config.host}:${config.port}`);
-        console.log(`[LazyDev] Security check: Bound exclusively to loopback (${config.host})`);
-        if (config.aiMode === 'demo') {
-          console.log('[LazyDev] Mode: DEMO MODE (LAZYDEV_AI_MODE=demo) — Ollama will not be contacted.');
+        console.log(`[LazyDev] Server listening at http://${config.host}:${config.port}`);
+        if (config.isPublicDemo) {
+          console.log(`[LazyDev] Mode: PUBLIC DEMO (LAZYDEV_PUBLIC_DEMO=true) — Bound to ${config.host}:${config.port}`);
+          console.log('[LazyDev] Security check: Server filesystem access blocked. In-memory disposable sandbox active.');
         } else {
-          console.log(`[LazyDev] Mode: OLLAMA (${config.ollamaHost})`);
+          console.log(`[LazyDev] Security check: Bound exclusively to loopback (${config.host})`);
+          if (config.aiMode === 'demo') {
+            console.log('[LazyDev] Mode: LOCAL DEMO (LAZYDEV_AI_MODE=demo) — Ollama will not be contacted.');
+          } else {
+            console.log(`[LazyDev] Mode: OLLAMA (${config.ollamaHost})`);
+          }
         }
 
         const handleShutdown = (signal: string) => {

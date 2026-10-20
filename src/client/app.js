@@ -6,6 +6,30 @@
 (function () {
   'use strict';
 
+  // Demo Session Isolation
+  let demoSessionId = 'session_' + Math.random().toString(36).substring(2, 10);
+  try {
+    const saved = sessionStorage.getItem('lazydev_demo_session');
+    if (saved) {
+      demoSessionId = saved;
+    } else {
+      sessionStorage.setItem('lazydev_demo_session', demoSessionId);
+    }
+  } catch {}
+
+  const originalFetch = window.fetch;
+  window.fetch = function (resource, init) {
+    if (typeof resource === 'string' && resource.startsWith('/api/')) {
+      init = init || {};
+      const headers = new Headers(init.headers || {});
+      if (!headers.has('x-demo-session')) {
+        headers.set('x-demo-session', demoSessionId);
+      }
+      init.headers = headers;
+    }
+    return originalFetch.call(this, resource, init);
+  };
+
   // System Elements
   const ollamaPill = document.getElementById('ollama-pill');
   const ollamaStatusText = document.getElementById('ollama-status-text');
@@ -124,8 +148,19 @@
   }
 
   function renderStatus(data) {
-    const isDemo = data.aiMode === 'demo' || data.app?.aiMode === 'demo';
+    const isPublicDemo = data.isPublicDemo || data.app?.isPublicDemo || data.app?.environment === 'public-demo';
+    const isDemo = isPublicDemo || data.aiMode === 'demo' || data.app?.aiMode === 'demo';
     currentAiMode = isDemo ? 'demo' : 'ollama';
+
+    const publicDemoBanner = document.getElementById('public-demo-banner');
+    if (publicDemoBanner) {
+      publicDemoBanner.style.display = isPublicDemo ? 'flex' : 'none';
+    }
+
+    const serverBadge = document.getElementById('server-badge');
+    if (serverBadge) {
+      serverBadge.textContent = isPublicDemo ? 'Demo: In-Memory Sandbox' : 'Host: 127.0.0.1';
+    }
 
     const aiDemoBanner = document.getElementById('ai-demo-banner');
     if (aiDemoBanner) {
@@ -137,7 +172,10 @@
 
     // Pill
     if (ollamaPill && ollamaStatusText) {
-      if (isDemo) {
+      if (isPublicDemo) {
+        ollamaPill.className = 'ollama-pill status-demo';
+        ollamaStatusText.textContent = 'Demo Mode — Safe In-Memory';
+      } else if (isDemo) {
         ollamaPill.className = 'ollama-pill status-demo';
         ollamaStatusText.textContent = 'Demo Mode — no AI model connected.';
       } else if (isConnected) {
@@ -153,7 +191,10 @@
 
     // Status Cards
     if (cardOllamaState) {
-      if (isDemo) {
+      if (isPublicDemo) {
+        cardOllamaState.textContent = 'Public Demo';
+        cardOllamaState.style.color = '#58a6ff';
+      } else if (isDemo) {
         cardOllamaState.textContent = 'Demo Mode';
         cardOllamaState.style.color = '#f59e0b';
       } else {
@@ -163,7 +204,9 @@
     }
 
     if (cardOllamaDetails) {
-      if (isDemo) {
+      if (isPublicDemo) {
+        cardOllamaDetails.textContent = 'Public demo mode active on Render. In-memory virtual workspace with sample proposals.';
+      } else if (isDemo) {
         cardOllamaDetails.textContent = 'Demo Mode active — no AI model connected. Deterministic sample proposals enabled.';
       } else {
         cardOllamaDetails.textContent = ollama.details || 'No details available.';
@@ -181,6 +224,23 @@
         activeProjectVal.title = data.project.root;
       } else {
         activeProjectVal.textContent = 'None';
+      }
+    }
+
+    if (isPublicDemo) {
+      if (projectPathInput) {
+        projectPathInput.value = 'demo-sandbox (Virtual Sandbox)';
+        projectPathInput.disabled = true;
+      }
+      if (scanProjectBtn) {
+        scanProjectBtn.disabled = true;
+        scanProjectBtn.textContent = 'Demo Active';
+      }
+      if (aiTargetFile && !aiTargetFile.value) {
+        aiTargetFile.value = 'src/calculator.ts';
+      }
+      if (aiPromptInput && !aiPromptInput.value) {
+        aiPromptInput.value = 'Add power and clamp helper functions';
       }
     }
 
@@ -213,7 +273,9 @@
 
       const data = await res.json();
       if (data.hasActiveProject && data.root) {
-        if (projectPathInput) projectPathInput.value = data.root;
+        if (projectPathInput && !projectPathInput.disabled) {
+          projectPathInput.value = data.root;
+        }
         await refreshProjectData();
       }
     } catch {
